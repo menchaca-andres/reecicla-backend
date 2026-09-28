@@ -1,0 +1,33 @@
+services:
+  auth-service:
+    build:
+      context: ./services/auth
+      dockerfile: Dockerfile
+    container_name: reecicla-auth-service
+    env_file:
+      - ./services/auth/.env
+    ports:
+      - "3001:3001"
+
+  quotation-service:
+    build:
+      context: ./services/quotation
+      dockerfile: Dockerfile
+    container_name: reecicla-quotation-service
+    env_file:
+      - ./services/quotation/.env
+    ports:
+      - "3002:3002"
+
+  gateway:
+    build:
+      context: ./services/gateway
+      dockerfile: Dockerfile
+    container_name: reecicla-gateway
+    env_file:
+      - ./services/gateway/.env
+    ports:
+      - "3000:3000"
+    depends_on:
+      - auth-service
+      - quotation-service
