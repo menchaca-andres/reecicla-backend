@@ -1,4 +1,61 @@
 services:
+  # Base de Datos para Auth Service
+  auth-db:
+    image: postgres:16-alpine
+    container_name: reecicla-auth-db
+    environment:
+      POSTGRES_DB: reecicla_auth_db
+      POSTGRES_USER: reecicla_user
+      POSTGRES_PASSWORD: reecicla_password
+    ports:
+      - "5431:5432"
+    volumes:
+      - ./01-auth-migration.sql:/docker-entrypoint-initdb.d/01-auth-migration.sql
+      - auth_db_data:/var/lib/postgresql/data
+
+  # Base de Datos para Quotation Service
+  quotation-db:
+    image: postgres:16-alpine
+    container_name: reecicla-quotation-db
+    environment:
+      POSTGRES_DB: reecicla_quotation_db
+      POSTGRES_USER: reecicla_user
+      POSTGRES_PASSWORD: reecicla_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./02-quotation-migration.sql:/docker-entrypoint-initdb.d/02-quotation-migration.sql
+      - quotation_db_data:/var/lib/postgresql/data
+
+  # Base de Datos para Orders Service
+  orders-db:
+    image: postgres:16-alpine
+    container_name: reecicla-orders-db
+    environment:
+      POSTGRES_DB: reecicla_orders_db
+      POSTGRES_USER: reecicla_user
+      POSTGRES_PASSWORD: reecicla_password
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./03-orders-migration.sql:/docker-entrypoint-initdb.d/03-orders-migration.sql
+      - orders_db_data:/var/lib/postgresql/data
+
+  # Base de Datos para Catalog Service
+  catalog-db:
+    image: postgres:16-alpine
+    container_name: reecicla-catalog-db
+    environment:
+      POSTGRES_DB: reecicla_catalog_db
+      POSTGRES_USER: reecicla_user
+      POSTGRES_PASSWORD: reecicla_password
+    ports:
+      - "5434:5432"
+    volumes:
+      - ./04-catalog-migration.sql:/docker-entrypoint-initdb.d/04-catalog-migration.sql
+      - catalog_db_data:/var/lib/postgresql/data
+
+  # Microservicios de Aplicación
   auth-service:
     build:
       context: ./services/auth
@@ -8,6 +65,8 @@ services:
       - ./services/auth/.env
     ports:
       - "3001:3001"
+    depends_on:
+      - auth-db
 
   quotation-service:
     build:
@@ -18,6 +77,8 @@ services:
       - ./services/quotation/.env
     ports:
       - "3002:3002"
+    depends_on:
+      - quotation-db
 
   gateway:
     build:
@@ -31,3 +92,9 @@ services:
     depends_on:
       - auth-service
       - quotation-service
+
+volumes:
+  auth_db_data:
+  quotation_db_data:
+  orders_db_data:
+  catalog_db_data:
