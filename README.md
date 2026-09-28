@@ -15,7 +15,7 @@ Todos los comandos se ejecutan desde la raíz del proyecto.
   docker compose up -d
   ```
 
-* **Si hiciste cambios en las dependencias (`package.json`) o en los `Dockerfile`:**
+* **Si se realizaron cambios en las dependencias (`package.json`) o en los `Dockerfile`:**
   ```bash
   docker compose up --build -d
   ```
@@ -29,7 +29,7 @@ Todos los comandos se ejecutan desde la raíz del proyecto.
 
 ### 2. Ver el estado y los logs
 
-* **Ver si los contenedores están corriendo:**
+* **Verificar si los contenedores están en ejecución:**
   ```bash
   docker compose ps
   ```
@@ -39,7 +39,7 @@ Todos los comandos se ejecutan desde la raíz del proyecto.
   docker compose logs -f
   ```
 
-* **Ver los logs de un solo servicio (ej. `auth-service`):**
+* **Ver los logs de un solo servicio (ejemplo: `auth-service`):**
   ```bash
   docker compose logs -f auth-service
   ```
@@ -48,7 +48,7 @@ Todos los comandos se ejecutan desde la raíz del proyecto.
 
 ### 3. Detener el proyecto
 
-* **Pausar/Detener los contenedores:**
+* **Detener los contenedores:**
   ```bash
   docker compose down
   ```
@@ -58,7 +58,7 @@ Todos los comandos se ejecutan desde la raíz del proyecto.
 
 ## 🌐 Endpoints para Probar en el Navegador
 
-Una vez levantado el proyecto, podés abrir en tu navegador:
+Una vez iniciado el proyecto, se pueden probar las siguientes rutas en el navegador:
 
 | Servicio | Vía Gateway (Recomendado) | Acceso Directo |
 | :--- | :--- | :--- |
