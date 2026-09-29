@@ -21,6 +21,7 @@ export class AuthService {
       userId: user.id,
       tenantId: user.tenant_id,
       email: user.email,
+      role: user.role,
     };
 
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '24h' });
@@ -33,6 +34,7 @@ export class AuthService {
         email: user.email,
         name: user.name,
         phone: user.phone,
+        role: user.role,
         created_at: user.created_at,
       },
     };
@@ -53,6 +55,7 @@ export class AuthService {
       userId: user.id,
       tenantId: user.tenant_id,
       email: user.email,
+      role: user.role,
     };
 
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '24h' });
@@ -65,6 +68,7 @@ export class AuthService {
         email: user.email,
         name: user.name,
         phone: user.phone,
+        role: user.role,
         created_at: user.created_at,
       },
     };
@@ -81,6 +85,7 @@ export class AuthService {
       email: user.email,
       name: user.name,
       phone: user.phone,
+      role: user.role,
       created_at: user.created_at,
     };
   }
