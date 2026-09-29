@@ -10,7 +10,7 @@ services:
     ports:
       - "5431:5432"
     volumes:
-      - ./01-auth-migration.sql:/docker-entrypoint-initdb.d/01-auth-migration.sql
+      - ./services/auth/db/01-auth-migration.sql:/docker-entrypoint-initdb.d/01-auth-migration.sql
       - auth_db_data:/var/lib/postgresql/data
 
   # Base de Datos para Quotation Service
@@ -24,7 +24,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - ./02-quotation-migration.sql:/docker-entrypoint-initdb.d/02-quotation-migration.sql
+      - ./services/quotation/db/02-quotation-migration.sql:/docker-entrypoint-initdb.d/02-quotation-migration.sql
       - quotation_db_data:/var/lib/postgresql/data
 
   # Base de Datos para Orders Service
