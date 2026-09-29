@@ -5,6 +5,7 @@ export interface User {
   password_hash: string;
   name?: string;
   phone?: string;
+  role: string;
   is_active: boolean;
   created_at: Date;
   updated_at: Date;
@@ -16,6 +17,7 @@ export interface RegisterDTO {
   password: string;
   name?: string;
   phone?: string;
+  role?: string;
 }
 
 export interface LoginDTO {
@@ -28,6 +30,7 @@ export interface AuthPayload {
   userId: string;
   tenantId: string;
   email: string;
+  role: string;
 }
 
 export interface UserResponse {
@@ -36,5 +39,6 @@ export interface UserResponse {
   email: string;
   name?: string;
   phone?: string;
+  role: string;
   created_at: Date;
 }
