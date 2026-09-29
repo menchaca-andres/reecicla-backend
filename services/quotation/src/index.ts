@@ -10,12 +10,10 @@ const PORT = process.env.PORT || 3002;
 
 app.use(express.json());
 
-// Healthcheck
 app.get('/health', (_req, res) => {
   res.json({ service: 'quotation-service', status: 'OK' });
 });
 
-// Quotation Routes (HU-004, HU-005)
 app.use('/api/quotation', quotationRoutes);
 
 app.listen(PORT, async () => {
