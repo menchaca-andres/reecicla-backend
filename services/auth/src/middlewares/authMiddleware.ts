@@ -29,3 +29,21 @@ export const authenticateToken = (
     res.status(403).json({ error: 'Token inválido o expirado.' });
   }
 };
+
+export const authorizeRoles = (...allowedRoles: string[]) => {
+  return (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
+    if (!req.user) {
+      res.status(401).json({ error: 'Usuario no autenticado.' });
+      return;
+    }
+
+    if (!allowedRoles.includes(req.user.role)) {
+      res.status(403).json({
+        error: `Acceso denegado. Se requiere uno de los siguientes roles: ${allowedRoles.join(', ')}`,
+      });
+      return;
+    }
+
+    next();
+  };
+};
