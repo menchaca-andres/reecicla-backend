@@ -18,6 +18,7 @@ export class AuthController {
         password,
         name,
         phone,
+        role: 'CLIENT',
       });
 
       res.status(201).json({
