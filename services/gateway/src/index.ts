@@ -1,5 +1,6 @@
 import express from 'express';
 import dotenv from 'dotenv';
+import cors from 'cors';
 import proxy from 'express-http-proxy';
 
 dotenv.config();
@@ -9,6 +10,8 @@ const PORT = process.env.PORT || 3000;
 
 const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://auth-service:3001';
 const QUOTATION_SERVICE_URL = process.env.QUOTATION_SERVICE_URL || 'http://quotation-service:3002';
+
+app.use(cors());
 
 app.get('/health', (_req, res) => {
   res.json({ service: 'gateway', status: 'OK' });
