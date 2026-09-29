@@ -23,4 +23,14 @@ export class PricingRuleModel {
     const { rows } = await pool.query(query, [tenantId, deviceType]);
     return rows;
   }
+
+  static async getByTenant(tenantId: string): Promise<PricingRule[]> {
+    const query = `
+      SELECT * FROM pricing_rules
+      WHERE tenant_id = $1 AND is_active = TRUE
+      ORDER BY device_type, rule_key;
+    `;
+    const { rows } = await pool.query(query, [tenantId]);
+    return rows;
+  }
 }

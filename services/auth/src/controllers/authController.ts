@@ -3,6 +3,7 @@ import { AuthService } from '../services/authService';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 
 export class AuthController {
+  // Public client self-registration (ALWAYS forces role = 'CLIENT')
   static async register(req: Request, res: Response): Promise<void> {
     try {
       const { tenant_id, email, password, name, phone } = req.body;
@@ -18,15 +19,41 @@ export class AuthController {
         password,
         name,
         phone,
-        role: 'CLIENT',
       });
 
       res.status(201).json({
-        message: 'Usuario registrado exitosamente.',
+        message: 'Usuario cliente registrado exitosamente.',
         ...result,
       });
     } catch (error: any) {
       res.status(400).json({ error: error.message || 'Error al registrar el usuario.' });
+    }
+  }
+
+  // Superadmin endpoint to create a Tenant Admin
+  static async createAdmin(req: Request, res: Response): Promise<void> {
+    try {
+      const { tenant_id, email, password, name, phone } = req.body;
+
+      if (!tenant_id || !email || !password) {
+        res.status(400).json({ error: 'tenant_id, email y password son requeridos.' });
+        return;
+      }
+
+      const adminUser = await AuthService.createAdmin({
+        tenant_id,
+        email,
+        password,
+        name,
+        phone,
+      });
+
+      res.status(201).json({
+        message: 'Administrador de tenant creado exitosamente.',
+        user: adminUser,
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || 'Error al crear el administrador.' });
     }
   }
 

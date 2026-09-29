@@ -20,6 +20,14 @@ export interface RegisterDTO {
   role?: string;
 }
 
+export interface CreateAdminDTO {
+  tenant_id: string;
+  email: string;
+  password: string;
+  name?: string;
+  phone?: string;
+}
+
 export interface LoginDTO {
   tenant_id: string;
   email: string;

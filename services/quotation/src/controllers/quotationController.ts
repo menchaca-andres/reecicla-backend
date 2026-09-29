@@ -80,4 +80,18 @@ export class QuotationController {
       res.status(500).json({ error: 'Error al consultar las cotizaciones del usuario.' });
     }
   }
+
+  static async getTenantRules(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const tenantId = (req.query.tenant_id as string) || req.user?.tenantId;
+      if (!tenantId) {
+        res.status(400).json({ error: 'tenant_id es requerido.' });
+        return;
+      }
+      const rules = await QuotationService.getTenantRules(tenantId);
+      res.status(200).json({ rules });
+    } catch (error: any) {
+      res.status(500).json({ error: 'Error al obtener las reglas del tenant.' });
+    }
+  }
 }

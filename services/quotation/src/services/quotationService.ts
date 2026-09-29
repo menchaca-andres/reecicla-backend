@@ -61,4 +61,9 @@ export class QuotationService {
   static async getUserQuotes(tenantId: string, userId: string): Promise<Quote[]> {
     return await QuoteModel.findByUserId(tenantId, userId);
   }
+
+  static async getTenantRules(tenantId: string): Promise<PricingRule[]> {
+    if (!tenantId) throw new Error('tenant_id es requerido.');
+    return await PricingRuleModel.getByTenant(tenantId);
+  }
 }

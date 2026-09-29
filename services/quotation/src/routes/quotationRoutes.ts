@@ -4,7 +4,8 @@ import { authenticateToken, authorizeRoles } from '../middlewares/authMiddleware
 
 const router = Router();
 
-router.post('/rules', authenticateToken, authorizeRoles('ADMIN'), QuotationController.definePricingRule);
+router.post('/rules', authenticateToken, authorizeRoles('ADMIN', 'SUPER_ADMIN'), QuotationController.definePricingRule);
+router.get('/rules', authenticateToken, authorizeRoles('ADMIN', 'SUPER_ADMIN'), QuotationController.getTenantRules);
 
 router.post('/quotes', authenticateToken, QuotationController.createQuote);
 

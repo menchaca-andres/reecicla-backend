@@ -18,8 +18,9 @@ CREATE TABLE roles (
 
 -- Insertar roles por defecto del sistema
 INSERT INTO roles (name, description) VALUES
+('SUPER_ADMIN', 'Administrador Global de la Plataforma Reecicla'),
 ('CLIENT', 'Cliente general de la plataforma'),
-('ADMIN', 'Administrador del tenant'),
+('ADMIN', 'Administrador del tenant/negocio'),
 ('INSPECTOR', 'Inspector técnico de equipos')
 ON CONFLICT (name) DO NOTHING;
 
