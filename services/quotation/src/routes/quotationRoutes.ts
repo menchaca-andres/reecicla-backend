@@ -1,10 +1,10 @@
 import { Router } from 'express';
 import { QuotationController } from '../controllers/quotationController';
-import { authenticateToken } from '../middlewares/authMiddleware';
+import { authenticateToken, authorizeRoles } from '../middlewares/authMiddleware';
 
 const router = Router();
 
-router.post('/rules', QuotationController.definePricingRule);
+router.post('/rules', authenticateToken, authorizeRoles('ADMIN'), QuotationController.definePricingRule);
 
 router.post('/quotes', authenticateToken, QuotationController.createQuote);
 
