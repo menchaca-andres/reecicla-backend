@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { AuthPayload } from '../types/auth';
+import { AuthPayload, UserRole } from '../types/auth';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'default_jwt_secret_reecicla';
 
@@ -30,7 +30,7 @@ export const authenticateToken = (
   }
 };
 
-export const authorizeRoles = (...allowedRoles: string[]) => {
+export const authorizeRoles = (...allowedRoles: UserRole[]) => {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
     if (!req.user) {
       res.status(401).json({ error: 'Usuario no autenticado.' });

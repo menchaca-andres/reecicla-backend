@@ -1,50 +1,12 @@
--- =====================================================
--- Migración 001: Tablas de cotización
+-- ============================================================
+-- QUOTATION DB — Migración 02
 -- Servicio: quotation-service
 -- Base de datos: reecicla_quotation_db
--- PostgreSQL 18
--- =====================================================
+-- Alineado con: script.sql definitivo (Reecicla v1.0)
+-- ============================================================
 
--- Habilitar extensión para UUIDs
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- Tabla de cotizaciones (quotes)
-CREATE TABLE quotes (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id UUID NOT NULL,
-    user_id UUID NOT NULL,
-    device_type VARCHAR(50) NOT NULL,
-    brand VARCHAR(100),
-    model VARCHAR(100),
-    year INTEGER,
-    condition VARCHAR(50) NOT NULL,
-    base_price DECIMAL(10,2) NOT NULL,
-    adjustment DECIMAL(10,2) DEFAULT 0,
-    final_price DECIMAL(10,2) NOT NULL,
-    status VARCHAR(50) DEFAULT 'PENDING',
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- Índices para mejorar rendimiento
-CREATE INDEX idx_quotes_tenant ON quotes(tenant_id);
-CREATE INDEX idx_quotes_user ON quotes(user_id);
-CREATE INDEX idx_quotes_device_type ON quotes(device_type);
-CREATE INDEX idx_quotes_status ON quotes(status);
-CREATE INDEX idx_quotes_created_at ON quotes(created_at);
-
--- Comentario de documentación
-COMMENT ON TABLE quotes IS 'Cotizaciones de equipos electrónicos usados';
-COMMENT ON COLUMN quotes.tenant_id IS 'Identificador del tenant/empresa';
-COMMENT ON COLUMN quotes.user_id IS 'Referencia al usuario que solicitó la cotización (en reecicla_auth_db.users)';
-COMMENT ON COLUMN quotes.device_type IS 'Tipo de dispositivo: refrigerator, washing_machine, dishwasher, stove, etc.';
-COMMENT ON COLUMN quotes.condition IS 'Condición declarada: working, damaged, broken, etc.';
-COMMENT ON COLUMN quotes.base_price IS 'Precio base según tipo de dispositivo';
-COMMENT ON COLUMN quotes.adjustment IS 'Ajuste por condición, antigüedad, etc. (puede ser negativo)';
-COMMENT ON COLUMN quotes.final_price IS 'Precio final: base_price + adjustment';
-COMMENT ON COLUMN quotes.status IS 'Estado: PENDING, ACCEPTED, REJECTED, EXPIRED';
-
--- Trigger para actualizar updated_at automáticamente
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -53,47 +15,98 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER update_quotes_updated_at
-    BEFORE UPDATE ON quotes
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
-
--- Tabla de reglas de cotización (opcional, para Sprint 2+)
+-- ── Pricing Rules ─────────────────────────────────────────────
+-- Versionadas: cambiar una regla no altera cotizaciones ya emitidas (HU-004).
+-- device_type_id es referencia lógica al Catalog DB (sin FK cross-DB).
 CREATE TABLE pricing_rules (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id UUID NOT NULL,
-    device_type VARCHAR(50) NOT NULL,
-    rule_key VARCHAR(100) NOT NULL,
-    rule_value JSONB NOT NULL,
-    is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    id             UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id      UUID         NOT NULL,
+    device_type_id UUID         NOT NULL,  -- ref lógica → Catalog DB
+    version        INTEGER      NOT NULL,
+    base_price     NUMERIC(12,2) NOT NULL,
+    currency       CHAR(3)      NOT NULL DEFAULT 'BOB',
+    condition_adjust JSONB      NOT NULL DEFAULT '{}'::jsonb,
+    min_year       SMALLINT,
+    max_year       SMALLINT,
+    is_active      BOOLEAN      NOT NULL DEFAULT TRUE,
+    effective_from TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    effective_until TIMESTAMPTZ,
+    created_at     TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at     TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    CONSTRAINT uq_pricing_rules_type_version
+        UNIQUE (tenant_id, device_type_id, version),
+    CONSTRAINT ck_pricing_rules_version
+        CHECK (version > 0),
+    CONSTRAINT ck_pricing_rules_base_price
+        CHECK (base_price >= 0),
+    CONSTRAINT ck_pricing_rules_years
+        CHECK (min_year IS NULL OR max_year IS NULL OR min_year <= max_year),
+    CONSTRAINT ck_pricing_rules_dates
+        CHECK (effective_until IS NULL OR effective_until > effective_from)
 );
 
-CREATE INDEX idx_pricing_rules_tenant ON pricing_rules(tenant_id);
-CREATE INDEX idx_pricing_rules_device_type ON pricing_rules(device_type);
-CREATE UNIQUE INDEX idx_pricing_rules_unique ON pricing_rules(tenant_id, device_type, rule_key);
+CREATE INDEX idx_pricing_rules_device_type
+    ON pricing_rules (tenant_id, device_type_id);
 
-COMMENT ON TABLE pricing_rules IS 'Reglas de cotización por tipo de dispositivo y tenant';
-COMMENT ON COLUMN pricing_rules.rule_key IS 'Clave de la regla: base_price, condition_adjustment, age_factor, etc.';
-COMMENT ON COLUMN pricing_rules.rule_value IS 'Valor de la regla en formato JSON (flexible para diferentes tipos de reglas)';
+-- Solo una regla activa por tipo y tenant.
+CREATE UNIQUE INDEX uq_pricing_rules_one_active
+    ON pricing_rules (tenant_id, device_type_id)
+    WHERE is_active;
 
--- Trigger para pricing_rules
-CREATE TRIGGER update_pricing_rules_updated_at
+CREATE TRIGGER trg_pricing_rules_updated_at
     BEFORE UPDATE ON pricing_rules
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
--- Datos de prueba (OPCIONAL, solo para desarrollo)
--- Reglas hardcodeadas para MVP
-INSERT INTO pricing_rules (tenant_id, device_type, rule_key, rule_value) VALUES
-('00000000-0000-0000-0000-000000000001', 'refrigerator', 'base_price', '{"amount": 150, "currency": "USD"}'),
-('00000000-0000-0000-0000-000000000001', 'refrigerator', 'condition_adjustment', '{"working": 0, "damaged": -50, "broken": -100}'),
-('00000000-0000-0000-0000-000000000001', 'washing_machine', 'base_price', '{"amount": 120, "currency": "USD"}'),
-('00000000-0000-0000-0000-000000000001', 'washing_machine', 'condition_adjustment', '{"working": 0, "damaged": -40, "broken": -80}');
+-- ── Quotes ────────────────────────────────────────────────────
+CREATE TABLE quotes (
+    id               UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id        UUID         NOT NULL,
+    user_id          UUID         NOT NULL,  -- ref lógica → Auth DB
+    pricing_rule_id  UUID         NOT NULL,
+    device_type_id   UUID         NOT NULL,  -- ref lógica → Catalog DB
+    device_type_name VARCHAR(120) NOT NULL,  -- snapshot
+    brand            VARCHAR(100),           -- snapshot
+    model            VARCHAR(100),
+    year             SMALLINT,
+    condition        VARCHAR(50)  NOT NULL,
+    base_price       NUMERIC(12,2) NOT NULL,
+    adjustment       NUMERIC(12,2) NOT NULL DEFAULT 0,
+    final_price      NUMERIC(12,2) NOT NULL,
+    currency         CHAR(3)      NOT NULL DEFAULT 'BOB',
+    -- HU-017/HU-018: cotización ajustada referencia a la original.
+    quote_type       VARCHAR(20)  NOT NULL DEFAULT 'INITIAL',
+    parent_quote_id  UUID,
+    -- HU-010: solo se aceptan cotizaciones vigentes.
+    valid_until      TIMESTAMPTZ  NOT NULL,
+    status           VARCHAR(30)  NOT NULL DEFAULT 'PENDING',
+    created_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    CONSTRAINT fk_quotes_pricing_rule
+        FOREIGN KEY (pricing_rule_id) REFERENCES pricing_rules(id),
+    CONSTRAINT fk_quotes_parent
+        FOREIGN KEY (parent_quote_id) REFERENCES quotes(id),
+    CONSTRAINT ck_quotes_prices
+        CHECK (base_price >= 0 AND final_price >= 0),
+    CONSTRAINT ck_quotes_year
+        CHECK (year IS NULL OR year BETWEEN 1800 AND 2200),
+    CONSTRAINT ck_quotes_type
+        CHECK (
+            (quote_type = 'INITIAL'  AND parent_quote_id IS NULL) OR
+            (quote_type = 'ADJUSTED' AND parent_quote_id IS NOT NULL)
+        ),
+    CONSTRAINT ck_quotes_valid_until
+        CHECK (valid_until > created_at),
+    CONSTRAINT ck_quotes_status
+        CHECK (status IN ('PENDING', 'ACCEPTED', 'REJECTED', 'EXPIRED'))
+);
 
--- =====================================================
--- Verificación
--- =====================================================
--- SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';
--- SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'quotes';
+CREATE INDEX idx_quotes_tenant_user ON quotes (tenant_id, user_id);
+CREATE INDEX idx_quotes_status      ON quotes (tenant_id, status);
+CREATE INDEX idx_quotes_parent      ON quotes (parent_quote_id);
+-- Para el job que marca EXPIRED las cotizaciones vencidas.
+CREATE INDEX idx_quotes_pending_valid_until
+    ON quotes (valid_until) WHERE status = 'PENDING';
+
+CREATE TRIGGER trg_quotes_updated_at
+    BEFORE UPDATE ON quotes
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

@@ -1,15 +1,30 @@
+export interface Tenant {
+  id: string;
+  name: string;
+  status: string;
+  created_at: Date;
+  updated_at: Date;
+}
+
 export interface User {
   id: string;
   tenant_id: string;
   email: string;
   password_hash: string;
-  name?: string;
+  name: string;
   phone?: string;
-  role: string;
+  role: UserRole;
   is_active: boolean;
   created_at: Date;
   updated_at: Date;
 }
+
+export type UserRole =
+  | 'SUPER_ADMIN'
+  | 'TENANT_ADMIN'
+  | 'CATALOG_ADMIN'
+  | 'INSPECTOR'
+  | 'CLIENT';
 
 export interface RegisterDTO {
   tenant_id: string;
@@ -17,7 +32,6 @@ export interface RegisterDTO {
   password: string;
   name?: string;
   phone?: string;
-  role?: string;
 }
 
 export interface CreateAdminDTO {
@@ -26,6 +40,7 @@ export interface CreateAdminDTO {
   password: string;
   name?: string;
   phone?: string;
+  role?: UserRole; // permite crear TENANT_ADMIN, CATALOG_ADMIN, INSPECTOR
 }
 
 export interface LoginDTO {
@@ -38,15 +53,15 @@ export interface AuthPayload {
   userId: string;
   tenantId: string;
   email: string;
-  role: string;
+  role: UserRole;
 }
 
 export interface UserResponse {
   id: string;
   tenant_id: string;
   email: string;
-  name?: string;
+  name: string;
   phone?: string;
-  role: string;
+  role: UserRole;
   created_at: Date;
 }
