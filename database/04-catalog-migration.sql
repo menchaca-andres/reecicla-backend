@@ -112,5 +112,6 @@ INSERT INTO device_types (tenant_id, code, name, description) VALUES
     ('00000000-0000-0000-0000-000000000001', 'WASHING_MACHINE', 'Lavadora',      'Lavadora doméstica'),
     ('00000000-0000-0000-0000-000000000001', 'TV',              'Televisor',     'Televisor / Smart TV'),
     ('00000000-0000-0000-0000-000000000001', 'LAPTOP',          'Laptop',        'Notebook / Laptop'),
-    ('00000000-0000-0000-0000-000000000001', 'SMARTPHONE',      'Smartphone',    'Celular / Smartphone')
+    ('00000000-0000-0000-0000-000000000001', 'SMARTPHONE',      'Smartphone',    'Celular / Smartphone'),
+    ('00000000-0000-0000-0000-000000000001', 'MICROWAVE',       'Horno de Microondas', 'Horno microondas doméstico')
 ON CONFLICT (tenant_id, code) DO NOTHING;
