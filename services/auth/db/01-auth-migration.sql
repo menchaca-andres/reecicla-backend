@@ -88,8 +88,17 @@ INSERT INTO users (tenant_id, email, password_hash, name, role) VALUES
     (
         '00000000-0000-0000-0000-000000000001',
         'superadmin@reecicla.com',
-        '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi',
+        'superadmin123',
         'Super Admin',
         'SUPER_ADMIN'
     )
 ON CONFLICT DO NOTHING;
+
+-- ── Processed Events (TE-02: idempotencia de mensajería) ─────
+CREATE TABLE IF NOT EXISTS processed_events (
+    event_id      UUID         PRIMARY KEY,
+    event_type    VARCHAR(120) NOT NULL,
+    tenant_id     UUID         NOT NULL,
+    processed_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_processed_events_tenant ON processed_events (tenant_id);

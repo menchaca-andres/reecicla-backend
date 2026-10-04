@@ -115,3 +115,10 @@ INSERT INTO device_types (tenant_id, code, name, description) VALUES
     ('00000000-0000-0000-0000-000000000001', 'SMARTPHONE',      'Smartphone',    'Celular / Smartphone'),
     ('00000000-0000-0000-0000-000000000001', 'MICROWAVE',       'Horno de Microondas', 'Horno microondas doméstico')
 ON CONFLICT (tenant_id, code) DO NOTHING;
+
+-- ── Processed Events (TE-02: idempotencia de mensajería) ─────
+CREATE TABLE IF NOT EXISTS processed_events (
+    event_id      UUID         PRIMARY KEY,
+    event_type    VARCHAR(100) NOT NULL,
+    processed_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
