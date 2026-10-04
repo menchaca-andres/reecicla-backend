@@ -88,7 +88,7 @@ INSERT INTO users (tenant_id, email, password_hash, name, role) VALUES
     (
         '00000000-0000-0000-0000-000000000001',
         'superadmin@reecicla.com',
-        '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi',
+        'superadmin123',
         'Super Admin',
         'SUPER_ADMIN'
     )
