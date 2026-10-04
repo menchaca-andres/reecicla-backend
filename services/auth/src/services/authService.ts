@@ -2,6 +2,7 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { UserModel } from '../models/userModel';
 import { RegisterDTO, CreateAdminDTO, LoginDTO, AuthPayload, UserResponse, UserRole } from '../types/auth';
+import { publishEvent } from '../messaging/eventBus';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'default_jwt_secret_reecicla';
 const SALT_ROUNDS = 10;
@@ -17,7 +18,20 @@ export class AuthService {
     const user = await UserModel.createUser({ ...dto, role: 'CLIENT' }, passwordHash);
 
     const token = AuthService.signToken(user.id, user.tenant_id, user.email, user.role as UserRole);
-    return { token, user: AuthService.toUserResponse(user) };
+    const userResp = AuthService.toUserResponse(user);
+
+    publishEvent('auth.user.registered', {
+      event_type: 'user.registered',
+      tenant_id: user.tenant_id,
+      payload: {
+        user_id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+      },
+    }).catch((err) => console.error('Exception al publicar evento user.registered:', err));
+
+    return { token, user: userResp };
   }
 
   static async createAdmin(dto: CreateAdminDTO): Promise<UserResponse> {
