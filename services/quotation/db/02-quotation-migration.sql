@@ -110,3 +110,11 @@ CREATE INDEX idx_quotes_pending_valid_until
 CREATE TRIGGER trg_quotes_updated_at
     BEFORE UPDATE ON quotes
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ── Processed Events (TE-02: idempotencia de mensajería) ─────
+CREATE TABLE IF NOT EXISTS processed_events (
+    event_id      UUID         PRIMARY KEY,
+    event_type    VARCHAR(100) NOT NULL,
+    processed_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
