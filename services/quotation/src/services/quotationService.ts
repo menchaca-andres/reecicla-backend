@@ -19,6 +19,8 @@ const DEFAULT_CONDITION_ADJUSTMENTS: Record<string, number> = {
   broken: -80,
 };
 
+const CATALOG_SERVICE_URL = process.env.CATALOG_SERVICE_URL || 'http://localhost:3003';
+
 export class QuotationService {
   static async definePricingRule(dto: DefinePricingRuleDTO): Promise<PricingRule> {
     if (!dto.tenant_id || !dto.device_type || !dto.rule_key || !dto.rule_value) {
@@ -30,6 +32,25 @@ export class QuotationService {
   static async createQuote(dto: CreateQuoteDTO): Promise<Quote> {
     if (!dto.tenant_id || !dto.user_id || !dto.device_type || !dto.condition) {
       throw new Error('tenant_id, user_id, device_type y condition son requeridos.');
+    }
+
+    let catalogResponse: Response;
+    try {
+      const availabilityUrl = new URL(
+        `/api/catalog/device-types/${encodeURIComponent(dto.device_type)}/availability`,
+        CATALOG_SERVICE_URL
+      );
+      availabilityUrl.searchParams.set('tenant_id', dto.tenant_id);
+      catalogResponse = await fetch(availabilityUrl);
+    } catch {
+      throw new Error('No se pudo validar el tipo de equipo en el catálogo.');
+    }
+    if (!catalogResponse.ok) {
+      throw new Error('No se pudo validar el tipo de equipo en el catálogo.');
+    }
+    const availability = await catalogResponse.json() as { available?: boolean };
+    if (!availability.available) {
+      throw new Error('El tipo de equipo no está activo para cotizar.');
     }
 
     const rules = await PricingRuleModel.getRulesForDevice(dto.tenant_id, dto.device_type);
