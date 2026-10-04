@@ -46,7 +46,10 @@ export class QuotationController {
         quote,
       });
     } catch (error: any) {
-      res.status(400).json({ error: error.message || 'Error al solicitar la cotización.' });
+      const message = error.message || 'Error al solicitar la cotización.';
+      const statusCode = message.includes('tipo de equipo no está activo') ? 422 :
+        message.includes('validar el tipo de equipo') ? 503 : 400;
+      res.status(statusCode).json({ error: message });
     }
   }
 
