@@ -93,3 +93,12 @@ INSERT INTO users (tenant_id, email, password_hash, name, role) VALUES
         'SUPER_ADMIN'
     )
 ON CONFLICT DO NOTHING;
+
+-- ── Processed Events (TE-02: idempotencia de mensajería) ─────
+CREATE TABLE IF NOT EXISTS processed_events (
+    event_id      UUID         PRIMARY KEY,
+    event_type    VARCHAR(120) NOT NULL,
+    tenant_id     UUID         NOT NULL,
+    processed_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_processed_events_tenant ON processed_events (tenant_id);
