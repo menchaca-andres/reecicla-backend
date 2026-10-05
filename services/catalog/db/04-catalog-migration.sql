@@ -116,6 +116,23 @@ INSERT INTO device_types (tenant_id, code, name, description) VALUES
     ('00000000-0000-0000-0000-000000000001', 'MICROWAVE',       'Horno de Microondas', 'Horno microondas doméstico')
 ON CONFLICT (tenant_id, code) DO NOTHING;
 
+-- Seed Brands por defecto (HU-007)
+INSERT INTO device_brands (tenant_id, device_type_id, name)
+SELECT dt.tenant_id, dt.id, b.brand_name
+FROM device_types dt
+CROSS JOIN (
+    VALUES 
+        ('REFRIGERATOR', 'Samsung'), ('REFRIGERATOR', 'LG'), ('REFRIGERATOR', 'Whirlpool'), ('REFRIGERATOR', 'Midea'),
+        ('WASHING_MACHINE', 'Samsung'), ('WASHING_MACHINE', 'LG'), ('WASHING_MACHINE', 'Whirlpool'),
+        ('TV', 'Samsung'), ('TV', 'LG'), ('TV', 'Sony'), ('TV', 'TCL'),
+        ('LAPTOP', 'Apple'), ('LAPTOP', 'Dell'), ('LAPTOP', 'Lenovo'), ('LAPTOP', 'HP'), ('LAPTOP', 'ASUS'),
+        ('SMARTPHONE', 'Apple'), ('SMARTPHONE', 'Samsung'), ('SMARTPHONE', 'Xiaomi'), ('SMARTPHONE', 'Motorola'),
+        ('MICROWAVE', 'Whirlpool'), ('MICROWAVE', 'LG'), ('MICROWAVE', 'Samsung'), ('MICROWAVE', 'Panasonic')
+) AS b(type_code, brand_name)
+WHERE dt.tenant_id = '00000000-0000-0000-0000-000000000001' AND dt.code = b.type_code
+ON CONFLICT (tenant_id, device_type_id, name) DO NOTHING;
+
+
 -- ── Processed Events (TE-02: idempotencia de mensajería) ─────
 CREATE TABLE IF NOT EXISTS processed_events (
     event_id      UUID         PRIMARY KEY,
