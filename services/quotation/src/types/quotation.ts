@@ -3,6 +3,11 @@ export interface PricingRule {
   tenant_id: string;
   device_type: string;
   device_type_id: string;
+  brand_id?: string | null;
+  brand_name?: string | null;
+  model?: string | null;
+  min_year?: number | null;
+  max_year?: number | null;
   version: number;
   rule_key: string;
   rule_value: Record<string, any>;
@@ -16,6 +21,11 @@ export interface PricingRuleRecord {
   tenant_id: string;
   device_type_id: string;
   device_type_code: string | null;
+  brand_id?: string | null;
+  brand_name?: string | null;
+  model?: string | null;
+  min_year?: number | null;
+  max_year?: number | null;
   version: number;
   base_price: number | string;
   currency: string;
@@ -32,6 +42,11 @@ export interface DefinePricingRuleDTO {
   device_type: string;
   device_type_id?: string;
   device_type_code?: string;
+  brand_id?: string;
+  brand_name?: string;
+  model?: string;
+  min_year?: number;
+  max_year?: number;
   rule_key: string;
   rule_value: Record<string, any>;
 }

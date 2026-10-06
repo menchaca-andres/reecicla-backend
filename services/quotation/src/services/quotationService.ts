@@ -102,13 +102,18 @@ export class QuotationService {
 
     const deviceType = await getAvailableDeviceType(dto.tenant_id, dto.device_type);
 
-    const pricingRule = await PricingRuleModel.getOrCreateDefault(
+    const bestRule = await PricingRuleModel.findBestMatchingRule(
       dto.tenant_id,
       deviceType.id,
-      deviceType.code,
-      DEFAULT_BASE_PRICES[deviceType.code.toLowerCase()] ?? 100,
-      DEFAULT_CONDITION_ADJUSTMENTS
+      dto.brand,
+      dto.model,
+      dto.year
     );
+
+    if (!bestRule) {
+      throw new Error('No existe una regla de valoración configurada para este tipo de equipo o modelo.');
+    }
+    const pricingRule = bestRule;
     const basePrice = Number(pricingRule.base_price);
     const adjustment = Number(
       pricingRule.condition_adjust[dto.condition.toLowerCase()] ??

@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { AuthPayload } from '../types/orders';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'reecicla-dev-jwt-secret-change-me';
+const JWT_SECRET = process.env.JWT_SECRET || 'default_jwt_secret_reecicla';
 
 export interface AuthenticatedRequest extends Request {
   authUser?: AuthPayload;
