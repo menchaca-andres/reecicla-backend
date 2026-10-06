@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { AuthPayload, UserRole } from '../types/catalog';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'reecicla_jwt_secret_super_secure_key_2026';
+const JWT_SECRET = process.env.JWT_SECRET || 'default_jwt_secret_reecicla';
 
 export interface AuthenticatedRequest extends Request {
   user?: AuthPayload;
