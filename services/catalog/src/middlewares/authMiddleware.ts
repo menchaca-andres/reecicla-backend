@@ -8,6 +8,31 @@ export interface AuthenticatedRequest extends Request {
   user?: AuthPayload;
 }
 
+export const authenticateOptionalToken = (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): void => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    next();
+    return;
+  }
+
+  const [scheme, token] = authHeader.split(' ');
+  if (scheme !== 'Bearer' || !token) {
+    res.status(401).json({ error: 'Token de autenticación inválido.' });
+    return;
+  }
+
+  try {
+    req.user = jwt.verify(token, JWT_SECRET) as AuthPayload;
+    next();
+  } catch {
+    res.status(403).json({ error: 'Token inválido o expirado.' });
+  }
+};
+
 export const authenticateToken = (
   req: AuthenticatedRequest,
   res: Response,
