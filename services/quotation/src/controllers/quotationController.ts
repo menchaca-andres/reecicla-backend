@@ -6,7 +6,7 @@ import { dispatchPendingQuoteEvents } from '../messaging/quoteOutbox';
 export class QuotationController {
   static async definePricingRule(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
-      const { tenant_id, device_type, rule_key, rule_value } = req.body;
+      const { tenant_id, device_type, brand_id, brand_name, model, min_year, max_year, rule_key, rule_value } = req.body;
       if (!req.authUser || (req.authUser.role !== 'SUPER_ADMIN' && tenant_id !== req.authUser.tenantId)) {
         res.status(403).json({ error: 'No puedes modificar reglas de otro tenant.' });
         return;
@@ -14,6 +14,11 @@ export class QuotationController {
       const rule = await QuotationService.definePricingRule({
         tenant_id: req.authUser.role === 'SUPER_ADMIN' ? tenant_id : req.authUser.tenantId,
         device_type,
+        brand_id,
+        brand_name,
+        model,
+        min_year,
+        max_year,
         rule_key,
         rule_value,
       });
