@@ -5,7 +5,7 @@ import { AuthPayload, UserRole } from '../types/auth';
 const JWT_SECRET = process.env.JWT_SECRET || 'default_jwt_secret_reecicla';
 
 export interface AuthenticatedRequest extends Request {
-  user?: AuthPayload;
+  authUser?: AuthPayload;
 }
 
 export const authenticateToken = (
@@ -23,7 +23,7 @@ export const authenticateToken = (
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as AuthPayload;
-    req.user = decoded;
+    req.authUser = decoded;
     next();
   } catch (error) {
     res.status(403).json({ error: 'Token inválido o expirado.' });
@@ -32,12 +32,12 @@ export const authenticateToken = (
 
 export const authorizeRoles = (...allowedRoles: UserRole[]) => {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
-    if (!req.user) {
+    if (!req.authUser) {
       res.status(401).json({ error: 'Usuario no autenticado.' });
       return;
     }
 
-    if (!allowedRoles.includes(req.user.role)) {
+    if (!allowedRoles.includes(req.authUser.role)) {
       res.status(403).json({
         error: `Acceso denegado. Se requiere uno de los siguientes roles: ${allowedRoles.join(', ')}`,
       });

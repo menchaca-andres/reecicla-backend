@@ -22,6 +22,7 @@ CREATE TABLE pricing_rules (
     id             UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id      UUID         NOT NULL,
     device_type_id UUID         NOT NULL,  -- ref lógica → Catalog DB
+    device_type_code VARCHAR(60),           -- snapshot para administración
     version        INTEGER      NOT NULL,
     base_price     NUMERIC(12,2) NOT NULL,
     currency       CHAR(3)      NOT NULL DEFAULT 'BOB',
@@ -62,6 +63,7 @@ CREATE TABLE quotes (
     id               UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id        UUID         NOT NULL,
     user_id          UUID         NOT NULL,  -- ref lógica → Auth DB
+    quota_reservation_id UUID,
     pricing_rule_id  UUID         NOT NULL,
     device_type_id   UUID         NOT NULL,  -- ref lógica → Catalog DB
     device_type_name VARCHAR(120) NOT NULL,  -- snapshot
@@ -117,4 +119,17 @@ CREATE TABLE IF NOT EXISTS processed_events (
     event_type    VARCHAR(100) NOT NULL,
     processed_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS quote_event_outbox (
+    event_id UUID PRIMARY KEY,
+    correlation_id UUID NOT NULL,
+    tenant_id UUID NOT NULL,
+    event_type VARCHAR(100) NOT NULL,
+    payload JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    published_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_quote_event_outbox_pending
+    ON quote_event_outbox (created_at) WHERE published_at IS NULL;
 

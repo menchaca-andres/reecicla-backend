@@ -79,12 +79,12 @@ export class AuthController {
 
   static async getProfile(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
-      if (!req.user) {
+      if (!req.authUser) {
         res.status(401).json({ error: 'Usuario no autenticado.' });
         return;
       }
 
-      const user = await AuthService.getUserProfile(req.user.userId);
+      const user = await AuthService.getUserProfile(req.authUser.userId);
       res.status(200).json({ user });
     } catch (error: any) {
       res.status(404).json({ error: error.message || 'Error al obtener el perfil.' });

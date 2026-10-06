@@ -53,6 +53,7 @@ export interface AuthPayload {
   userId: string;
   tenantId: string;
   email: string;
+  name?: string;
   role: UserRole;
 }
 
