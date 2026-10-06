@@ -70,40 +70,156 @@ export class OrderModel {
 
   static async listForUser(tenantId: string, userId: string): Promise<Record<string, unknown>[]> {
     const { rows } = await pool.query(
-      `SELECT o.*, COALESCE(
-         json_agg(json_build_object(
-           'previous_status', h.previous_status,
-           'new_status', h.new_status,
-           'reason', h.reason,
-           'created_at', h.created_at
-         ) ORDER BY h.created_at) FILTER (WHERE h.id IS NOT NULL), '[]'
-       ) AS status_history
+      `SELECT o.*,
+              b.tracking_code,
+              b.status AS box_status,
+              b.shipped_at,
+              COALESCE(
+                json_agg(json_build_object(
+                  'previous_status', h.previous_status,
+                  'new_status', h.new_status,
+                  'reason', h.reason,
+                  'created_at', h.created_at
+                ) ORDER BY h.created_at) FILTER (WHERE h.id IS NOT NULL), '[]'
+              ) AS status_history
        FROM orders o
+       LEFT JOIN LATERAL (
+         SELECT tracking_code, status, shipped_at
+         FROM box_requests
+         WHERE order_id = o.id AND tenant_id = o.tenant_id
+         ORDER BY requested_at DESC
+         LIMIT 1
+       ) b ON true
        LEFT JOIN order_status_history h ON h.order_id = o.id AND h.tenant_id = o.tenant_id
        WHERE o.tenant_id = $1 AND o.user_id = $2
-       GROUP BY o.id
+       GROUP BY o.id, b.tracking_code, b.status, b.shipped_at
        ORDER BY o.created_at DESC`,
       [tenantId, userId]
     );
     return rows;
   }
 
+  static async listAllForTenant(tenantId: string): Promise<Record<string, unknown>[]> {
+    const { rows } = await pool.query(
+      `SELECT o.*,
+              b.tracking_code,
+              b.status AS box_status,
+              b.shipped_at,
+              COALESCE(
+                json_agg(json_build_object(
+                  'previous_status', h.previous_status,
+                  'new_status', h.new_status,
+                  'reason', h.reason,
+                  'created_at', h.created_at
+                ) ORDER BY h.created_at) FILTER (WHERE h.id IS NOT NULL), '[]'
+              ) AS status_history
+       FROM orders o
+       LEFT JOIN LATERAL (
+         SELECT tracking_code, status, shipped_at
+         FROM box_requests
+         WHERE order_id = o.id AND tenant_id = o.tenant_id
+         ORDER BY requested_at DESC
+         LIMIT 1
+       ) b ON true
+       LEFT JOIN order_status_history h ON h.order_id = o.id AND h.tenant_id = o.tenant_id
+       WHERE o.tenant_id = $1
+       GROUP BY o.id, b.tracking_code, b.status, b.shipped_at
+       ORDER BY o.created_at DESC`,
+      [tenantId]
+    );
+    return rows;
+  }
+
   static async findForUser(orderId: string, tenantId: string, userId: string): Promise<Record<string, unknown> | null> {
     const { rows } = await pool.query(
-      `SELECT o.*, COALESCE(
-         json_agg(json_build_object(
-           'previous_status', h.previous_status,
-           'new_status', h.new_status,
-           'reason', h.reason,
-           'created_at', h.created_at
-         ) ORDER BY h.created_at) FILTER (WHERE h.id IS NOT NULL), '[]'
-       ) AS status_history
+      `SELECT o.*,
+              b.tracking_code,
+              b.status AS box_status,
+              b.shipped_at,
+              COALESCE(
+                json_agg(json_build_object(
+                  'previous_status', h.previous_status,
+                  'new_status', h.new_status,
+                  'reason', h.reason,
+                  'created_at', h.created_at
+                ) ORDER BY h.created_at) FILTER (WHERE h.id IS NOT NULL), '[]'
+              ) AS status_history
        FROM orders o
+       LEFT JOIN LATERAL (
+         SELECT tracking_code, status, shipped_at
+         FROM box_requests
+         WHERE order_id = o.id AND tenant_id = o.tenant_id
+         ORDER BY requested_at DESC
+         LIMIT 1
+       ) b ON true
        LEFT JOIN order_status_history h ON h.order_id = o.id AND h.tenant_id = o.tenant_id
        WHERE o.id = $1 AND o.tenant_id = $2 AND o.user_id = $3
-       GROUP BY o.id`,
+       GROUP BY o.id, b.tracking_code, b.status, b.shipped_at`,
       [orderId, tenantId, userId]
     );
     return rows[0] ?? null;
   }
+
+  static async dispatchOrder(
+    tenantId: string,
+    orderId: string,
+    operatorUserId: string,
+    trackingCode: string,
+    labelUrl?: string,
+    newStatus: 'BOX_SHIPPED' | 'IN_TRANSIT' = 'BOX_SHIPPED'
+  ): Promise<Record<string, unknown>> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const orderRes = await client.query(
+        `SELECT id, status FROM orders WHERE id = $1 AND tenant_id = $2 FOR UPDATE`,
+        [orderId, tenantId]
+      );
+      if (orderRes.rowCount === 0) {
+        throw new Error('Orden no encontrada.');
+      }
+      const order = orderRes.rows[0];
+
+      await client.query(
+        `UPDATE box_requests
+         SET tracking_code = $1,
+             label_url = COALESCE($2, label_url),
+             status = 'SHIPPED',
+             shipped_at = NOW(),
+             updated_at = NOW()
+         WHERE order_id = $3 AND tenant_id = $4`,
+        [trackingCode, labelUrl || null, orderId, tenantId]
+      );
+
+      await client.query(
+        `UPDATE orders
+         SET status = $1, updated_at = NOW()
+         WHERE id = $2 AND tenant_id = $3`,
+        [newStatus, orderId, tenantId]
+      );
+
+      await client.query(
+        `INSERT INTO order_status_history (tenant_id, order_id, previous_status, new_status, changed_by_user, reason)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          tenantId,
+          orderId,
+          order.status,
+          newStatus,
+          operatorUserId,
+          `Guía de envío registrada: ${trackingCode}`,
+        ]
+      );
+
+      await client.query('COMMIT');
+      return { id: orderId, status: newStatus, tracking_code: trackingCode };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
 }
