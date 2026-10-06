@@ -66,7 +66,11 @@ export class QuoteModel {
       if (quote.status !== 'PENDING') throw new Error('La cotización ya no está pendiente.');
 
       if (new Date(quote.valid_until).getTime() <= Date.now()) {
-        await client.query(`UPDATE quotes SET status = 'EXPIRED' WHERE id = $1`, [quoteId]);
+        await client.query(
+          `UPDATE quotes SET status = 'EXPIRED'
+           WHERE id = $1 AND tenant_id = $2 AND user_id = $3 AND status = 'PENDING'`,
+          [quoteId, tenantId, userId]
+        );
         await client.query('COMMIT');
         throw new Error('La cotización venció y no puede aceptarse.');
       }
@@ -92,9 +96,9 @@ export class QuoteModel {
 
       const updatedResult = await client.query<Quote>(
         `UPDATE quotes SET status = 'ACCEPTED'
-         WHERE id = $1 AND status = 'PENDING'
+         WHERE id = $1 AND tenant_id = $2 AND user_id = $3 AND status = 'PENDING'
          RETURNING *, device_type_name AS device_type`,
-        [quoteId]
+        [quoteId, tenantId, userId]
       );
       await client.query(
         `INSERT INTO quote_event_outbox (event_id, correlation_id, tenant_id, event_type, payload)
@@ -111,15 +115,69 @@ export class QuoteModel {
     }
   }
 
-  static async findById(id: string): Promise<Quote | null> {
-    const query = `SELECT *, device_type_name AS device_type FROM quotes WHERE id = $1;`;
-    const { rows } = await pool.query(query, [id]);
+  static async rejectQuote(quoteId: string, tenantId: string, userId: string): Promise<Quote> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const quoteResult = await client.query<Quote>(
+        `SELECT *, device_type_name AS device_type
+         FROM quotes WHERE id = $1 AND tenant_id = $2 AND user_id = $3 FOR UPDATE`,
+        [quoteId, tenantId, userId]
+      );
+      const quote = quoteResult.rows[0];
+      if (!quote) throw new Error('Cotización no encontrada.');
+      if (quote.status !== 'PENDING') throw new Error('La cotización ya no está pendiente.');
+
+      if (new Date(quote.valid_until).getTime() <= Date.now()) {
+        await client.query(
+          `UPDATE quotes SET status = 'EXPIRED'
+           WHERE id = $1 AND tenant_id = $2 AND user_id = $3 AND status = 'PENDING'`,
+          [quoteId, tenantId, userId]
+        );
+        await client.query('COMMIT');
+        throw new Error('La cotización venció y no puede rechazarse.');
+      }
+
+      const updatedResult = await client.query<Quote>(
+        `UPDATE quotes SET status = 'REJECTED'
+         WHERE id = $1 AND tenant_id = $2 AND user_id = $3 AND status = 'PENDING'
+         RETURNING *, device_type_name AS device_type`,
+        [quoteId, tenantId, userId]
+      );
+      await client.query('COMMIT');
+      return updatedResult.rows[0];
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  static async findById(id: string, tenantId: string, userId: string): Promise<Quote | null> {
+    await pool.query(
+      `UPDATE quotes SET status = 'EXPIRED'
+       WHERE id = $1 AND tenant_id = $2 AND user_id = $3
+         AND status = 'PENDING' AND valid_until <= NOW()`,
+      [id, tenantId, userId]
+    );
+    const { rows } = await pool.query(
+      `SELECT *, device_type_name AS device_type, valid_until <= NOW() AS is_expired
+       FROM quotes WHERE id = $1 AND tenant_id = $2 AND user_id = $3`,
+      [id, tenantId, userId]
+    );
     return rows[0] || null;
   }
 
   static async findByUserId(tenantId: string, userId: string): Promise<Quote[]> {
+    await pool.query(
+      `UPDATE quotes SET status = 'EXPIRED'
+       WHERE tenant_id = $1 AND user_id = $2
+         AND status = 'PENDING' AND valid_until <= NOW()`,
+      [tenantId, userId]
+    );
     const query = `
-      SELECT *, device_type_name AS device_type FROM quotes
+      SELECT *, device_type_name AS device_type, valid_until <= NOW() AS is_expired FROM quotes
       WHERE tenant_id = $1 AND user_id = $2
       ORDER BY created_at DESC;
     `;

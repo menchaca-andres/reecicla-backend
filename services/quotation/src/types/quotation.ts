@@ -69,6 +69,7 @@ export interface Quote {
   currency: string;
   quote_type: string;
   valid_until: Date;
+  is_expired?: boolean;
   status: string;
   created_at: Date;
   updated_at: Date;

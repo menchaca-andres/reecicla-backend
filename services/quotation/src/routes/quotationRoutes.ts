@@ -11,6 +11,7 @@ router.post('/quotes', authenticateToken, QuotationController.createQuote);
 
 router.get('/quotes/user', authenticateToken, QuotationController.getUserQuotes);
 router.post('/quotes/:id/accept', authenticateToken, QuotationController.acceptQuote);
-router.get('/quotes/:id', QuotationController.getQuote);
+router.post('/quotes/:id/reject', authenticateToken, QuotationController.rejectQuote);
+router.get('/quotes/:id', authenticateToken, QuotationController.getQuote);
 
 export default router;

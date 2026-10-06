@@ -74,10 +74,15 @@ export class QuotationController {
     }
   }
 
-  static async getQuote(req: Request, res: Response): Promise<void> {
+  static async getQuote(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
+      const user = req.authUser;
+      if (!user) {
+        res.status(401).json({ error: 'Se requiere una sesión autenticada.' });
+        return;
+      }
       const { id } = req.params;
-      const quote = await QuotationService.getQuoteById(id);
+      const quote = await QuotationService.getQuoteById(id, user.tenantId, user.userId);
       if (!quote) {
         res.status(404).json({ error: 'Cotización no encontrada.' });
         return;
@@ -85,6 +90,24 @@ export class QuotationController {
       res.status(200).json({ quote });
     } catch (error: any) {
       res.status(500).json({ error: 'Error al consultar la cotización.' });
+    }
+  }
+
+  static async rejectQuote(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const user = req.authUser;
+    if (!user) {
+      res.status(401).json({ error: 'Se requiere una sesión autenticada.' });
+      return;
+    }
+
+    try {
+      const quote = await QuotationService.rejectQuote(req.params.id, user.tenantId, user.userId);
+      res.status(200).json({ message: 'Cotización rechazada.', quote });
+    } catch (error: any) {
+      const message = error.message || 'No se pudo rechazar la cotización.';
+      const statusCode = message === 'Cotización no encontrada.' ? 404 :
+        message.includes('venció') ? 422 : 409;
+      res.status(statusCode).json({ error: message });
     }
   }
 
@@ -122,7 +145,7 @@ export class QuotationController {
       const userId = req.authUser?.userId;
 
       if (!tenantId || !userId) {
-        res.status(400).json({ error: 'tenant_id y user_id son requeridos.' });
+        res.status(401).json({ error: 'Se requiere una sesión autenticada.' });
         return;
       }
       if (requestedTenantId && requestedTenantId !== tenantId) {

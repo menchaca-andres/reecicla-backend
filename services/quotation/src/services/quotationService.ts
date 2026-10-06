@@ -150,8 +150,8 @@ export class QuotationService {
     }
   }
 
-  static async getQuoteById(id: string): Promise<Quote | null> {
-    return await QuoteModel.findById(id);
+  static async getQuoteById(id: string, tenantId: string, userId: string): Promise<Quote | null> {
+    return await QuoteModel.findById(id, tenantId, userId);
   }
 
   static async acceptQuote(
@@ -162,6 +162,10 @@ export class QuotationService {
     customerEmail: string
   ): Promise<Quote> {
     return await QuoteModel.acceptQuote(quoteId, tenantId, userId, customerName, customerEmail);
+  }
+
+  static async rejectQuote(quoteId: string, tenantId: string, userId: string): Promise<Quote> {
+    return await QuoteModel.rejectQuote(quoteId, tenantId, userId);
   }
 
   static async getUserQuotes(tenantId: string, userId: string): Promise<Quote[]> {
