@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import cors from 'cors';
 import quotationRoutes from './routes/quotationRoutes';
 import { pool } from './config/db';
+import { dispatchPendingQuoteEvents } from './messaging/quoteOutbox';
 import { subscribeEvent } from './messaging/eventBus';
 
 
@@ -20,11 +21,17 @@ app.get('/health', (_req, res) => {
 
 app.use('/api/quotation', quotationRoutes);
 
+const outboxTimer = setInterval(() => {
+  dispatchPendingQuoteEvents().catch((err) => console.error('[Quotation] Error al despachar outbox:', err));
+}, 5000);
+outboxTimer.unref();
+
 app.listen(PORT, async () => {
   console.log(`[Quotation Service] Running on port ${PORT}`);
   try {
     const res = await pool.query('SELECT NOW()');
     console.log(`[Quotation Service] DB connected at: ${res.rows[0].now}`);
+    dispatchPendingQuoteEvents().catch((err) => console.error('[Quotation] Error inicial al despachar outbox:', err));
 
     subscribeEvent<{ user_id: string; email: string }>('quotation.user.registered.queue', 'auth.user.registered', pool, async (event) => {
       console.log('[Quotation Service] Evento procesado exitosamente por primera vez:', {

@@ -1,4 +1,4 @@
-import amqp, { ChannelModel, Channel, ConsumeMessage } from 'amqplib';
+import amqp, { ChannelModel, ConfirmChannel, ConsumeMessage } from 'amqplib';
 import { Pool } from 'pg';
 import crypto from 'crypto';
 
@@ -12,6 +12,7 @@ export interface DomainEvent<T = any> {
 }
 
 export interface PublishOptions<T = any> {
+  event_id?: string;
   event_type: string;
   tenant_id: string;
   correlation_id?: string;
@@ -19,19 +20,19 @@ export interface PublishOptions<T = any> {
 }
 
 let connection: ChannelModel | null = null;
-let activeChannel: Channel | null = null;
+let activeChannel: ConfirmChannel | null = null;
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://reecicla:reecicla_password@rabbitmq:5672';
 const MAIN_EXCHANGE = 'reecicla.events';
 
-export async function getRabbitChannel(): Promise<Channel> {
+export async function getRabbitChannel(): Promise<ConfirmChannel> {
   if (activeChannel) return activeChannel;
 
   let retries = 5;
   while (retries > 0) {
     try {
       connection = await amqp.connect(RABBITMQ_URL);
-      const ch = await connection.createChannel();
+      const ch = await connection.createConfirmChannel();
       await ch.assertExchange(MAIN_EXCHANGE, 'topic', { durable: true });
       activeChannel = ch;
       console.log('Conectado exitosamente a RabbitMQ (Broker TE-02)');
@@ -50,7 +51,7 @@ export async function publishEvent<T>(routingKey: string, options: PublishOption
   const ch = await getRabbitChannel();
 
   const event: DomainEvent<T> = {
-    event_id: crypto.randomUUID(),
+    event_id: options.event_id || crypto.randomUUID(),
     correlation_id: options.correlation_id || crypto.randomUUID(),
     tenant_id: options.tenant_id,
     event_type: options.event_type,
@@ -58,9 +59,11 @@ export async function publishEvent<T>(routingKey: string, options: PublishOption
     payload: options.payload,
   };
 
-  ch.publish(MAIN_EXCHANGE, routingKey, Buffer.from(JSON.stringify(event)), {
-    persistent: true,
-    contentType: 'application/json',
+  await new Promise<void>((resolve, reject) => {
+    ch.publish(MAIN_EXCHANGE, routingKey, Buffer.from(JSON.stringify(event)), {
+      persistent: true,
+      contentType: 'application/json',
+    }, (error) => error ? reject(error) : resolve());
   });
 
   console.log(`Evento publicado [${routingKey}]:`, {

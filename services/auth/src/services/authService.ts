@@ -17,7 +17,7 @@ export class AuthService {
     const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
     const user = await UserModel.createUser({ ...dto, role: 'CLIENT' }, passwordHash);
 
-    const token = AuthService.signToken(user.id, user.tenant_id, user.email, user.role as UserRole);
+    const token = AuthService.signToken(user.id, user.tenant_id, user.email, user.role as UserRole, user.name);
     const userResp = AuthService.toUserResponse(user);
 
     publishEvent('auth.user.registered', {
@@ -56,7 +56,7 @@ export class AuthService {
     const isMatch = await bcrypt.compare(dto.password, user.password_hash);
     if (!isMatch) throw new Error('Credenciales inválidas o tenant incorrecto.');
 
-    const token = AuthService.signToken(user.id, user.tenant_id, user.email, user.role as UserRole);
+    const token = AuthService.signToken(user.id, user.tenant_id, user.email, user.role as UserRole, user.name);
     return { token, user: AuthService.toUserResponse(user) };
   }
 
@@ -66,8 +66,8 @@ export class AuthService {
     return AuthService.toUserResponse(user);
   }
 
-  private static signToken(userId: string, tenantId: string, email: string, role: UserRole): string {
-    const payload: AuthPayload = { userId, tenantId, email, role };
+  private static signToken(userId: string, tenantId: string, email: string, role: UserRole, name?: string): string {
+    const payload: AuthPayload = { userId, tenantId, email, name, role };
     return jwt.sign(payload, JWT_SECRET, { expiresIn: '24h' });
   }
 

@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { AuthController } from '../controllers/authController';
+import { QuotaController } from '../controllers/quotaController';
 import { authenticateToken, authorizeRoles } from '../middlewares/authMiddleware';
+import { requireInternalService } from '../middlewares/internalServiceMiddleware';
 
 const router = Router();
 
@@ -11,5 +13,10 @@ router.post('/admin', authenticateToken, authorizeRoles('SUPER_ADMIN'), AuthCont
 router.post('/login', AuthController.login);
 
 router.get('/me', authenticateToken, AuthController.getProfile);
+
+router.patch('/tenants/:tenantId/plan', authenticateToken, authorizeRoles('SUPER_ADMIN'), QuotaController.setTenantPlan);
+router.post('/internal/quote-quota/reservations', requireInternalService, QuotaController.reserveQuote);
+router.post('/internal/quote-quota/reservations/:reservationId/commit', requireInternalService, QuotaController.finishReservation);
+router.delete('/internal/quote-quota/reservations/:reservationId', requireInternalService, QuotaController.finishReservation);
 
 export default router;
