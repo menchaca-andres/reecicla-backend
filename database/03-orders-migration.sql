@@ -42,6 +42,8 @@ CREATE TABLE orders (
     customer_email    VARCHAR(255) NOT NULL,
     customer_phone    VARCHAR(50),
     pickup_address    JSONB,
+    tracking_token_hash BYTEA,
+    tracking_token_expires_at TIMESTAMPTZ,
     created_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
     updated_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
     accepted_at       TIMESTAMPTZ,

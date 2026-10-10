@@ -1,8 +1,24 @@
-import { Response } from 'express';
+import { Request, Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { OrderModel } from '../models/orderModel';
 
 export class OrderController {
+  static async track(req: Request, res: Response): Promise<void> {
+    try {
+      const order = await OrderModel.getByTrackingToken(req.params.token);
+      if (!order) {
+        res.status(404).json({ error: 'El enlace de seguimiento no es válido o venció.' });
+        return;
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Referrer-Policy', 'no-referrer');
+      res.status(200).json({ order });
+    } catch (error) {
+      console.error('[Orders] Error consultando seguimiento de invitado:', error);
+      res.status(500).json({ error: 'No se pudo consultar el seguimiento del pedido.' });
+    }
+  }
+
   static async listMine(req: AuthenticatedRequest, res: Response): Promise<void> {
     if (!req.authUser) {
       res.status(401).json({ error: 'Usuario no autenticado.' });

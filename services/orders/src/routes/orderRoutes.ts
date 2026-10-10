@@ -5,6 +5,7 @@ import { authenticateToken } from '../middlewares/authMiddleware';
 
 const router = Router();
 
+router.get('/tracking/:token', OrderController.track);
 router.get('/admin/all', authenticateToken, OrderController.listAll);
 router.get('/', authenticateToken, OrderController.listMine);
 router.get('/:id', authenticateToken, OrderController.getMine);

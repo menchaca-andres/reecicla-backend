@@ -18,6 +18,7 @@ router.get('/me', authenticateToken, AuthController.getProfile);
 router.patch('/tenants/:tenantId/plan', authenticateToken, authorizeRoles('SUPER_ADMIN'), QuotaController.setTenantPlan);
 router.post('/internal/guest-verifications', requireInternalService, AuthController.requestGuestVerification);
 router.post('/internal/guest-verifications/verify', requireInternalService, AuthController.verifyGuestClient);
+router.post('/internal/order-tracking-links', requireInternalService, AuthController.sendOrderTrackingLink);
 router.post('/internal/quote-quota/reservations', requireInternalService, QuotaController.reserveQuote);
 router.post('/internal/quote-quota/reservations/:reservationId/commit', requireInternalService, QuotaController.finishReservation);
 router.delete('/internal/quote-quota/reservations/:reservationId', requireInternalService, QuotaController.finishReservation);

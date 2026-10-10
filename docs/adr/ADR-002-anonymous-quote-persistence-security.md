@@ -58,7 +58,7 @@ Para permitir que el cliente consulte o acepte su cotización desde otro disposi
 - El sistema permite enviar la cotización por correo electrónico o SMS con un **enlace directo (Magic Link)** estructurado como:
   `https://app.reecicla.com/recicla/{slug}/quote/{quote_id}`
 
-**Estado de implementación:** pendiente. El código actual verifica por SMTP el correo al aceptar la cotización, pero no implementa el envío de Magic Links para recuperar o aceptar una cotización desde otro dispositivo.
+**Estado de implementación:** el enlace de seguimiento de la orden se envía por SMTP después de crearla y permite consultarla desde otro dispositivo. El token es un HMAC vinculado al tenant y a la orden, su hash se almacena en Orders DB, solo permite lectura y vence en 90 días. No se implementa un enlace para recuperar cotizaciones que todavía no se aceptaron.
 
 ### 5. Política de Retención y Purga de Datos (TTL)
 

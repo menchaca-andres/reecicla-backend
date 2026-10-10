@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { AuthService } from '../services/authService';
+import { EmailService } from '../services/emailService';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 
 export class AuthController {
@@ -97,9 +98,8 @@ export class AuthController {
       });
     } catch (error: any) {
       const message = error.message || 'No se pudo enviar el código de verificación.';
-      const statusCode = message.includes('ya tiene una cuenta') || message.includes('usuario interno') ? 409 :
-        message.includes('Espera un minuto') ? 429 :
-          message.includes('SMTP_') || message.includes('verificar correos') ? 503 : 400;
+      const statusCode = message.includes('Espera un minuto') ? 429 :
+        message.includes('SMTP_') || message.includes('verificar correos') ? 503 : 400;
       res.status(statusCode).json({ error: message });
     }
   }
@@ -123,6 +123,46 @@ export class AuthController {
       const statusCode = message.includes('inválido o venció') ? 422 :
           message.includes('requeridos') || message.includes('no es válido') ? 400 : 503;
       res.status(statusCode).json({ error: message });
+    }
+  }
+
+  static async sendOrderTrackingLink(req: Request, res: Response): Promise<void> {
+    try {
+      const { email, customer_name, order_number, tracking_url } = req.body ?? {};
+      if (
+        typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
+        typeof customer_name !== 'string' || !customer_name.trim() ||
+        typeof order_number !== 'string' || !order_number.trim() ||
+        typeof tracking_url !== 'string'
+      ) {
+        res.status(400).json({ error: 'email, customer_name, order_number y tracking_url son requeridos.' });
+        return;
+      }
+      let url: URL;
+      try {
+        url = new URL(tracking_url);
+      } catch {
+        res.status(400).json({ error: 'La URL de seguimiento no es válida.' });
+        return;
+      }
+      const allowedOrigins = (process.env.TRACKING_LINK_ALLOWED_ORIGINS || process.env.FRONTEND_URL || 'http://localhost:5173')
+        .split(',')
+        .map((origin) => origin.trim())
+        .filter(Boolean);
+      if (!allowedOrigins.includes(url.origin) || !/^\/seguimiento\/[0-9a-f]{64}$/i.test(url.pathname)) {
+        res.status(400).json({ error: 'La URL de seguimiento no es válida.' });
+        return;
+      }
+      await EmailService.sendOrderTrackingLink(
+        email.trim(),
+        customer_name.trim(),
+        order_number.trim(),
+        url.toString()
+      );
+      res.status(202).json({ message: 'Enlace de seguimiento enviado.' });
+    } catch (error: any) {
+      console.error('[Auth] No se pudo enviar el enlace de seguimiento:', error);
+      res.status(503).json({ error: error.message || 'No se pudo enviar el enlace de seguimiento.' });
     }
   }
 

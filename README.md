@@ -69,7 +69,22 @@ Prefijo de negocio: `/recicla/{slug}/…`
 
 Los servicios internos solo son accesibles dentro de la red de Docker. El único puerto HTTP publicado es el Gateway (`3000`); las bases de datos y RabbitMQ están enlazados a `127.0.0.1` para uso local.
 
-En el Compose de desarrollo, los códigos de verificación se capturan localmente en Mailpit: abre `http://localhost:8025`. El cliente proporciona sus datos y verifica el correo para aceptar; no se crea una cuenta ni se requiere contraseña. Puede registrarse más adelante de manera opcional. Para otro SMTP, configura `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD` y `SMTP_FROM` en el `.env` raíz.
+En el Compose de desarrollo, los códigos de verificación se capturan localmente en Mailpit: abre `http://localhost:8025`. El cliente proporciona sus datos y verifica el correo para aceptar; no se crea una cuenta ni se requiere contraseña. Puede registrarse más adelante de manera opcional.
+
+Para enviar correos reales mediante Gmail, activa la verificación en dos pasos en la cuenta de Google y crea una contraseña de aplicación desde la seguridad de la cuenta. Usa esa contraseña —no la contraseña normal de Gmail— en el `.env` raíz:
+
+```dotenv
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=465
+SMTP_SECURE=true
+SMTP_USER=tu-correo@gmail.com
+SMTP_PASSWORD=tu-contraseña-de-aplicación
+SMTP_FROM=tu-correo@gmail.com
+```
+
+Usa la dirección completa en `SMTP_USER` y `SMTP_FROM`; pega la contraseña de aplicación sin espacios. No la compartas ni la subas al repositorio. Reinicia Auth para tomar la configuración con `docker compose up -d --force-recreate auth-service`. Con Gmail los mensajes llegarán a las bandejas reales y dejarán de aparecer en Mailpit. Para volver al modo local, configura `SMTP_HOST=mailpit`, `SMTP_PORT=1025`, `SMTP_SECURE=false` y deja `SMTP_USER` y `SMTP_PASSWORD` vacíos. Algunas cuentas administradas por una organización o con políticas de seguridad avanzadas pueden no permitir contraseñas de aplicación.
+
+Después de crear la orden, el cliente recibe un enlace privado de seguimiento. El token se almacena como hash y el enlace vence en 90 días. Configura `FRONTEND_URL` y `TRACKING_LINK_ALLOWED_ORIGINS` en despliegues no locales.
 
 En bases ya inicializadas, aplica las migraciones nuevas. En bases nuevas Compose las carga automáticamente:
 
@@ -80,6 +95,9 @@ docker compose exec -T auth-db psql -U reecicla_user -d reecicla_auth_db \
 docker compose exec -T orders-db psql -U reecicla_user -d reecicla_orders_db \
   -v ON_ERROR_STOP=1 \
   -f /docker-entrypoint-initdb.d/05-orders-anonymous-acceptance.sql
+docker compose exec -T orders-db psql -U reecicla_user -d reecicla_orders_db \
+  -v ON_ERROR_STOP=1 \
+  -f /docker-entrypoint-initdb.d/06-orders-tracking-links.sql
 ```
 
 Los comandos se ejecutan desde la carpeta `Reecicla`, donde está `docker-compose.yml`. Antes del primer inicio, copia `.env.example` a `.env` y define ambos valores como secretos aleatorios, distintos entre sí. No compartas el archivo `.env`.
