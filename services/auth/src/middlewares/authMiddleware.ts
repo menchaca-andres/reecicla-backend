@@ -2,7 +2,11 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { AuthPayload, UserRole } from '../types/auth';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'default_jwt_secret_reecicla';
+function jwtSecret(): string {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error('JWT_SECRET debe estar configurado.');
+  return secret;
+}
 
 export interface AuthenticatedRequest extends Request {
   authUser?: AuthPayload;
@@ -22,7 +26,7 @@ export const authenticateToken = (
   }
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as AuthPayload;
+    const decoded = jwt.verify(token, jwtSecret()) as AuthPayload;
     req.authUser = decoded;
     next();
   } catch (error) {

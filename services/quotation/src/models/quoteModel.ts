@@ -16,13 +16,13 @@ export class QuoteModel {
         currency, valid_until, status
       )
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-        NOW() + INTERVAL '30 days', 'PENDING')
+        NOW() + INTERVAL '30 days', $15)
       ON CONFLICT (quota_reservation_id) DO NOTHING
       RETURNING *, device_type_name AS device_type;
     `;
     const values = [
       dto.tenant_id,
-      dto.user_id,
+      dto.user_id || null,
       dto.quota_reservation_id || null,
       dto.pricing_rule_id,
       dto.device_type_id,
@@ -35,6 +35,7 @@ export class QuoteModel {
       adjustment,
       finalPrice,
       dto.currency || 'BOB',
+      dto.user_id ? 'PENDING' : 'ANONYMOUS',
     ];
     const { rows } = await pool.query(query, values);
     if (rows[0]) return rows[0];
@@ -51,19 +52,23 @@ export class QuoteModel {
     tenantId: string,
     userId: string,
     customerName: string,
-    customerEmail: string
+    customerEmail: string,
+    customerPhone?: string,
+    pickupAddress?: string
   ): Promise<Quote> {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
       const quoteResult = await client.query<Quote>(
         `SELECT *, device_type_name AS device_type
-         FROM quotes WHERE id = $1 AND tenant_id = $2 AND user_id = $3 FOR UPDATE`,
-        [quoteId, tenantId, userId]
+         FROM quotes WHERE id = $1 AND tenant_id = $2 FOR UPDATE`,
+        [quoteId, tenantId]
       );
       const quote = quoteResult.rows[0];
       if (!quote) throw new Error('Cotización no encontrada.');
-      if (quote.status !== 'PENDING') throw new Error('La cotización ya no está pendiente.');
+      if (quote.status !== 'PENDING' && quote.status !== 'ANONYMOUS') {
+        throw new Error('La cotización ya no está pendiente.');
+      }
 
       if (new Date(quote.valid_until).getTime() <= Date.now()) {
         await client.query(`UPDATE quotes SET status = 'EXPIRED' WHERE id = $1`, [quoteId]);
@@ -74,9 +79,13 @@ export class QuoteModel {
       const eventId = randomUUID();
       const correlationId = randomUUID();
       const acceptedAt = new Date().toISOString();
+      if (!userId) {
+        throw new Error('La cotización no puede aceptarse sin un usuario asociado.');
+      }
+
       const payload = {
         quote_id: quote.id,
-        user_id: quote.user_id,
+        user_id: userId,
         device_type_id: quote.device_type_id,
         device_type_name: quote.device_type_name,
         brand: quote.brand ?? null,
@@ -85,16 +94,18 @@ export class QuoteModel {
         condition: quote.condition,
         quoted_price: Number(quote.final_price),
         currency: quote.currency,
-        customer_name: customerName || customerEmail,
+        customer_name: customerName,
         customer_email: customerEmail,
+        customer_phone: customerPhone ?? null,
+        pickup_address: pickupAddress ?? null,
         accepted_at: acceptedAt,
       };
 
       const updatedResult = await client.query<Quote>(
-        `UPDATE quotes SET status = 'ACCEPTED'
-         WHERE id = $1 AND status = 'PENDING'
+        `UPDATE quotes SET status = 'ACCEPTED', user_id = $2
+         WHERE id = $1 AND status IN ('PENDING', 'ANONYMOUS')
          RETURNING *, device_type_name AS device_type`,
-        [quoteId]
+        [quoteId, userId]
       );
       await client.query(
         `INSERT INTO quote_event_outbox (event_id, correlation_id, tenant_id, event_type, payload)
@@ -109,6 +120,39 @@ export class QuoteModel {
     } finally {
       client.release();
     }
+  }
+
+  static async expireOverdueQuotes(): Promise<number> {
+    const { rowCount } = await pool.query(
+      `UPDATE quotes
+       SET status = 'EXPIRED'
+       WHERE status IN ('ANONYMOUS', 'PENDING')
+         AND valid_until <= NOW()`
+    );
+    return rowCount ?? 0;
+  }
+
+  static async purgeStaleAnonymousQuotes(retentionDays = 90): Promise<number> {
+    const { rowCount } = await pool.query(
+      `DELETE FROM quotes
+       WHERE user_id IS NULL
+         AND status IN ('EXPIRED', 'REJECTED')
+         AND updated_at < NOW() - ($1::int * INTERVAL '1 day')`,
+      [retentionDays]
+    );
+    return rowCount ?? 0;
+  }
+
+  static async rejectQuote(quoteId: string, tenantId: string): Promise<Quote> {
+    const { rows } = await pool.query<Quote>(
+      `UPDATE quotes
+       SET status = 'REJECTED'
+       WHERE id = $1 AND tenant_id = $2 AND status IN ('ANONYMOUS', 'PENDING')
+       RETURNING *, device_type_name AS device_type`,
+      [quoteId, tenantId]
+    );
+    if (!rows[0]) throw new Error('La cotización no está pendiente o no existe.');
+    return rows[0];
   }
 
   static async findById(id: string): Promise<Quote | null> {

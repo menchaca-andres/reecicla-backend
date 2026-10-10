@@ -33,6 +33,16 @@ export class UserModel {
     return rows[0] ?? null;
   }
 
+  static async findAnyByEmailAndTenant(email: string, tenantId: string): Promise<User | null> {
+    const query = `
+      SELECT *
+      FROM users
+      WHERE LOWER(email) = LOWER($1) AND tenant_id = $2;
+    `;
+    const { rows } = await pool.query(query, [email, tenantId]);
+    return rows[0] ?? null;
+  }
+
   static async findById(id: string): Promise<User | null> {
     const query = `
       SELECT *

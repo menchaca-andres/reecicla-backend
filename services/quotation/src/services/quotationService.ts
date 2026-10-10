@@ -22,7 +22,11 @@ const DEFAULT_CONDITION_ADJUSTMENTS: Record<string, number> = {
 
 const CATALOG_SERVICE_URL = process.env.CATALOG_SERVICE_URL || 'http://localhost:3003';
 const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://localhost:3001';
-const INTERNAL_SERVICE_TOKEN = process.env.INTERNAL_SERVICE_TOKEN;
+function internalServiceToken(): string {
+  const token = process.env.INTERNAL_SERVICE_TOKEN;
+  if (!token) throw new Error('INTERNAL_SERVICE_TOKEN debe estar configurado.');
+  return token;
+}
 
 interface CatalogDeviceType {
   id: string;
@@ -34,11 +38,11 @@ interface CatalogDeviceType {
 
 async function getAvailableDeviceType(tenantId: string, requestedType: string): Promise<CatalogDeviceType> {
   const catalogUrl = new URL('/api/catalog/device-types', CATALOG_SERVICE_URL);
-  catalogUrl.searchParams.set('tenant_id', tenantId);
-
   let response: Response;
   try {
-    response = await fetch(catalogUrl);
+    response = await fetch(catalogUrl, {
+      headers: { 'x-tenant-id': tenantId },
+    });
   } catch {
     throw new Error('No se pudo validar el tipo de equipo en el catálogo.');
   }
@@ -61,8 +65,6 @@ async function getAvailableDeviceType(tenantId: string, requestedType: string): 
 }
 
 async function updateQuoteReservation(reservationId: string, action: 'reserve' | 'commit' | 'release', tenantId?: string): Promise<void> {
-  if (!INTERNAL_SERVICE_TOKEN) throw new Error('El servicio interno de cuota no está configurado.');
-
   const reservationUrl = new URL('/api/auth/internal/quote-quota/reservations', AUTH_SERVICE_URL);
   const method = action === 'reserve' ? 'POST' : action === 'commit' ? 'POST' : 'DELETE';
   const url = action === 'reserve'
@@ -72,7 +74,7 @@ async function updateQuoteReservation(reservationId: string, action: 'reserve' |
     method,
     headers: {
       'Content-Type': 'application/json',
-      'x-internal-service-token': INTERNAL_SERVICE_TOKEN,
+      'x-internal-service-token': internalServiceToken(),
     },
     ...(action === 'reserve' ? { body: JSON.stringify({ tenant_id: tenantId, reservation_id: reservationId }) } : {}),
   });
@@ -80,6 +82,75 @@ async function updateQuoteReservation(reservationId: string, action: 'reserve' |
     const result = await response.json().catch(() => ({})) as { error?: string };
     throw new Error(result.error || 'No se pudo actualizar el límite mensual de cotizaciones.');
   }
+}
+
+export interface GuestClientSession {
+  user_id: string;
+  token: string;
+  user: { id: string; tenant_id: string; email: string; name: string; phone?: string; role: string };
+  created: boolean;
+}
+
+async function requestGuestVerification(
+  tenantId: string,
+  quoteId: string,
+  email: string,
+  name: string,
+  phone: string
+): Promise<void> {
+  const response = await fetch(new URL('/api/auth/internal/guest-verifications', AUTH_SERVICE_URL), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-internal-service-token': internalServiceToken(),
+      'x-tenant-id': tenantId,
+    },
+    body: JSON.stringify({ email, name, phone, tenant_id: tenantId, quote_id: quoteId }),
+  });
+  const result = await response.json().catch(() => ({})) as {
+    error?: string;
+    verification_required?: boolean;
+  };
+  if (!response.ok || !result.verification_required) {
+    const error = new Error(result.error || 'No se pudo enviar el código de verificación.');
+    Object.assign(error, { status: response.status });
+    throw error;
+  }
+}
+
+async function verifyGuestClient(
+  tenantId: string,
+  quoteId: string,
+  email: string,
+  code: string,
+  password: string
+): Promise<GuestClientSession> {
+  const response = await fetch(new URL('/api/auth/internal/guest-verifications/verify', AUTH_SERVICE_URL), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-internal-service-token': internalServiceToken(),
+      'x-tenant-id': tenantId,
+    },
+    body: JSON.stringify({ email, code, password, tenant_id: tenantId, quote_id: quoteId }),
+  });
+  const result = await response.json().catch(() => ({})) as {
+    error?: string;
+    token?: string;
+    created?: boolean;
+    user?: GuestClientSession['user'];
+  };
+  if (!response.ok || !result.token || !result.user?.id) {
+    const error = new Error(result.error || 'No se pudo verificar el correo del cliente.');
+    Object.assign(error, { status: response.status });
+    throw error;
+  }
+  return {
+    user_id: result.user.id,
+    token: result.token,
+    user: result.user,
+    created: Boolean(result.created),
+  };
 }
 
 export class QuotationService {
@@ -95,9 +166,9 @@ export class QuotationService {
     });
   }
 
-  static async createQuote(dto: CreateQuoteDTO, requestReservationId: string = randomUUID()): Promise<Quote> {
-    if (!dto.tenant_id || !dto.user_id || !dto.device_type || !dto.condition) {
-      throw new Error('tenant_id, user_id, device_type y condition son requeridos.');
+  static async createQuote(dto: CreateQuoteDTO, requestReservationId?: string): Promise<Quote> {
+    if (!dto.tenant_id || !dto.device_type || !dto.condition) {
+      throw new Error('tenant_id, device_type y condition son requeridos.');
     }
 
     const deviceType = await getAvailableDeviceType(dto.tenant_id, dto.device_type);
@@ -122,7 +193,7 @@ export class QuotationService {
 
     const finalPrice = Math.max(0, basePrice + adjustment);
 
-    const reservationId = requestReservationId;
+    const reservationId = requestReservationId ?? randomUUID();
     await updateQuoteReservation(reservationId, 'reserve', dto.tenant_id);
 
     let quoteCreated = false;
@@ -154,14 +225,86 @@ export class QuotationService {
     return await QuoteModel.findById(id);
   }
 
-  static async acceptQuote(
-    quoteId: string,
-    tenantId: string,
-    userId: string,
-    customerName: string,
-    customerEmail: string
-  ): Promise<Quote> {
-    return await QuoteModel.acceptQuote(quoteId, tenantId, userId, customerName, customerEmail);
+  static async expireOverdueQuotes(): Promise<number> {
+    return QuoteModel.expireOverdueQuotes();
+  }
+
+  static async purgeStaleAnonymousQuotes(): Promise<number> {
+    return QuoteModel.purgeStaleAnonymousQuotes();
+  }
+
+  static async rejectQuote(quoteId: string, tenantId: string): Promise<Quote> {
+    return QuoteModel.rejectQuote(quoteId, tenantId);
+  }
+
+  static async acceptQuote(input: {
+    quoteId: string;
+    tenantId: string;
+    userId: string | null;
+    customerName: string;
+    customerEmail: string;
+    phone?: string;
+    address?: string;
+    authenticated: boolean;
+    verificationCode?: string;
+    password?: string;
+  }): Promise<{ quote?: Quote; session?: GuestClientSession; verificationRequired?: boolean }> {
+    let name = input.customerName.trim();
+    let email = input.customerEmail.trim();
+    let phone = (input.phone ?? '').trim();
+
+    if (!name || !email) {
+      throw new Error('Nombre y correo del cliente son requeridos para aceptar la cotización.');
+    }
+    if (!input.authenticated && !phone) {
+      throw new Error('El teléfono es requerido para aceptar la cotización.');
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new Error('El correo del cliente no es válido.');
+    }
+
+    const currentQuote = await QuoteModel.findById(input.quoteId);
+    if (!currentQuote || currentQuote.tenant_id !== input.tenantId) {
+      throw new Error('Cotización no encontrada.');
+    }
+    if (currentQuote.status !== 'PENDING' && currentQuote.status !== 'ANONYMOUS') {
+      throw new Error('La cotización ya no está pendiente.');
+    }
+    if (new Date(currentQuote.valid_until).getTime() <= Date.now()) {
+      await QuoteModel.expireOverdueQuotes();
+      throw new Error('La cotización venció y no puede aceptarse.');
+    }
+
+    let userId = input.userId;
+    let session: GuestClientSession | undefined;
+    if (!userId) {
+      if (!input.verificationCode) {
+        await requestGuestVerification(input.tenantId, input.quoteId, email, name, phone);
+        return { verificationRequired: true };
+      }
+      session = await verifyGuestClient(
+        input.tenantId,
+        input.quoteId,
+        email,
+        input.verificationCode,
+        input.password ?? ''
+      );
+      userId = session.user_id;
+      name = session.user.name;
+      email = session.user.email;
+      phone = session.user.phone ?? '';
+    }
+
+    const quote = await QuoteModel.acceptQuote(
+      input.quoteId,
+      input.tenantId,
+      userId,
+      name,
+      email,
+      phone || undefined,
+      input.address?.trim() || undefined
+    );
+    return { quote, session };
   }
 
   static async getUserQuotes(tenantId: string, userId: string): Promise<Quote[]> {

@@ -41,7 +41,9 @@ Los clientes finales **no se registran ni inician sesión** para obtener una cot
 1. El cliente accede a la URL del negocio y completa el formulario de cotización (tipo de equipo, marca, modelo, condición).
 2. El sistema calcula y devuelve el precio estimado **sin requerir autenticación**.
 3. Si el cliente **acepta** la cotización, recién entonces se le presenta un formulario para ingresar sus datos personales (nombre, teléfono, correo) para coordinar el retiro.
-4. Con esos datos se crea el `user` en la DB y la cotización se vincula a él.
+4. El sistema envía un código de verificación de un solo uso al correo proporcionado. El código vence a los 10 minutos, permite hasta cinco intentos y su reenvío tiene un límite temporal.
+5. Al confirmar el código, el cliente define una contraseña; entonces se crea el `user`, se emite el JWT y la cotización se vincula a la cuenta.
+6. Si el correo ya corresponde a una cuenta existente en ese tenant, el cliente debe iniciar sesión; el flujo anónimo no activa cuentas existentes ni emite tokens para ellas.
 
 Los usuarios internos (`INSPECTOR`, `CATALOG_ADMIN`, `TENANT_ADMIN`, `SUPER_ADMIN`) mantienen el flujo de login con JWT sin cambios.
 
@@ -73,7 +75,7 @@ El diseño original.
 | Tabla     | Cambio requerido                                                                   |
 |-----------|------------------------------------------------------------------------------------|
 | `tenants` | Agregar columna `slug VARCHAR(60) UNIQUE NOT NULL`                                 |
-| `users`   | El campo `is_active = FALSE` para usuarios guest hasta que acepten la cotización   |
+| `users`   | No se crea un usuario mientras la cotización siga anónima; se crea tras verificar el correo al aceptar |
 | `quotes`  | Agregar estado `ANONYMOUS` previo a `PENDING` para cotizaciones sin usuario        |
 
 ### Impacto en el API Gateway
@@ -85,7 +87,8 @@ El diseño original.
 ### Impacto en Auth Service
 
 - El endpoint `POST /api/auth/register` deja de ser el punto de entrada del cliente final.
-- Se agrega un nuevo endpoint `POST /api/auth/guest-to-user` para convertir una cotización aceptada en un usuario registrado.
+- Se agregan endpoints internos para emitir y confirmar códigos de verificación por correo antes de convertir una cotización aceptada en un usuario registrado.
+- El envío se configura mediante SMTP; los códigos se guardan como hashes y nunca se devuelven al cliente.
 
 ### Impacto en Quotation Service
 
@@ -100,6 +103,7 @@ El diseño original.
 | Abuso del endpoint público de cotización    | Rate limiting por IP en el Gateway (ej: 10 req/min por IP)          |
 | Cotizaciones huérfanas sin usuario asociado | Job periódico que marca como `EXPIRED` cotizaciones anónimas viejas  |
 | Slug duplicado entre tenants                | Constraint `UNIQUE` en DB + validación en el endpoint de creación    |
+| Abuso del envío de códigos                  | Límite de reenvío por correo y tenant, vencimiento y máximo de intentos |
 
 ---
 

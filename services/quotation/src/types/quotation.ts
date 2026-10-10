@@ -54,7 +54,7 @@ export interface DefinePricingRuleDTO {
 export interface Quote {
   id: string;
   tenant_id: string;
-  user_id: string;
+  user_id: string | null;
   pricing_rule_id: string;
   device_type_id: string;
   device_type_name: string;
@@ -76,7 +76,7 @@ export interface Quote {
 
 export interface CreateQuoteDTO {
   tenant_id: string;
-  user_id: string;
+  user_id?: string | null;
   quota_reservation_id?: string;
   device_type: string;
   device_type_id?: string;

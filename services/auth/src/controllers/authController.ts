@@ -6,10 +6,11 @@ export class AuthController {
   // Public client self-registration (ALWAYS forces role = 'CLIENT')
   static async register(req: Request, res: Response): Promise<void> {
     try {
-      const { tenant_id, email, password, name, phone } = req.body;
+      const tenant_id = req.header('x-tenant-id')?.trim();
+      const { email, password, name, phone } = req.body;
 
       if (!tenant_id || !email || !password) {
-        res.status(400).json({ error: 'tenant_id, email y password son requeridos.' });
+        res.status(400).json({ error: 'email, password y el contexto del negocio son requeridos.' });
         return;
       }
 
@@ -59,10 +60,11 @@ export class AuthController {
 
   static async login(req: Request, res: Response): Promise<void> {
     try {
-      const { tenant_id, email, password } = req.body;
+      const tenant_id = req.header('x-tenant-id')?.trim();
+      const { email, password } = req.body;
 
       if (!tenant_id || !email || !password) {
-        res.status(400).json({ error: 'tenant_id, email y password son requeridos.' });
+        res.status(400).json({ error: 'email, password y el contexto del negocio son requeridos.' });
         return;
       }
 
@@ -74,6 +76,54 @@ export class AuthController {
       });
     } catch (error: any) {
       res.status(401).json({ error: error.message || 'Error al iniciar sesión.' });
+    }
+  }
+
+  static async requestGuestVerification(req: Request, res: Response): Promise<void> {
+    try {
+      const tenant_id = req.header('x-tenant-id')?.trim() || req.body?.tenant_id;
+      const { email, name, phone, quote_id } = req.body ?? {};
+      await AuthService.requestGuestVerification({
+        tenant_id: tenant_id || '',
+        quote_id: quote_id || '',
+        email: email || '',
+        name: name || '',
+        phone: phone || '',
+      });
+      res.status(202).json({
+        verification_required: true,
+        message: 'Enviamos un código de verificación a tu correo.',
+      });
+    } catch (error: any) {
+      const message = error.message || 'No se pudo enviar el código de verificación.';
+      const statusCode = message.includes('ya tiene una cuenta') || message.includes('usuario interno') ? 409 :
+        message.includes('Espera un minuto') ? 429 :
+          message.includes('SMTP_') || message.includes('verificar correos') ? 503 : 400;
+      res.status(statusCode).json({ error: message });
+    }
+  }
+
+  static async verifyGuestClient(req: Request, res: Response): Promise<void> {
+    try {
+      const tenant_id = req.header('x-tenant-id')?.trim() || req.body?.tenant_id;
+      const { email, code, password, quote_id } = req.body ?? {};
+      const result = await AuthService.verifyGuestClient({
+        tenant_id: tenant_id || '',
+        quote_id: quote_id || '',
+        email: email || '',
+        code: code || '',
+        password: password || '',
+      });
+      res.status(200).json({
+        message: 'Correo verificado y cliente creado.',
+        ...result,
+      });
+    } catch (error: any) {
+      const message = error.message || 'No se pudo verificar el correo.';
+      const statusCode = message.includes('ya tiene una cuenta') ? 409 :
+        message.includes('inválido o venció') ? 422 :
+          message.includes('requeridos') || message.includes('no es válido') ? 400 : 503;
+      res.status(statusCode).json({ error: message });
     }
   }
 

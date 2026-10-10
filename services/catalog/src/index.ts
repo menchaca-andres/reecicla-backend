@@ -5,6 +5,7 @@ import catalogRoutes from './routes/catalogRoutes';
 import { pool } from './config/db';
 
 dotenv.config();
+if (!process.env.JWT_SECRET) throw new Error('JWT_SECRET debe estar configurado.');
 
 const app = express();
 const PORT = process.env.PORT || 3003;

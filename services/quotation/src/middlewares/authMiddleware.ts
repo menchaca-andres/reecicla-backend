@@ -2,11 +2,35 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { AuthPayload } from '../types/quotation';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'default_jwt_secret_reecicla';
+function jwtSecret(): string {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error('JWT_SECRET debe estar configurado.');
+  return secret;
+}
 
 export interface AuthenticatedRequest extends Request {
   authUser?: AuthPayload;
 }
+
+export const authenticateOptionalToken = (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): void => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) {
+    next();
+    return;
+  }
+
+  try {
+    req.authUser = jwt.verify(token, jwtSecret()) as AuthPayload;
+    next();
+  } catch {
+    res.status(403).json({ error: 'Token inválido o expirado.' });
+  }
+};
 
 export const authenticateToken = (
   req: AuthenticatedRequest,
@@ -22,7 +46,7 @@ export const authenticateToken = (
   }
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as AuthPayload;
+    const decoded = jwt.verify(token, jwtSecret()) as AuthPayload;
     req.authUser = decoded;
     next();
   } catch (error) {

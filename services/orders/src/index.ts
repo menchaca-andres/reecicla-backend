@@ -6,6 +6,7 @@ import { pool } from './config/db';
 import { closeQuoteAcceptedConsumer, startQuoteAcceptedConsumer } from './messaging/eventConsumer';
 
 dotenv.config();
+if (!process.env.JWT_SECRET) throw new Error('JWT_SECRET debe estar configurado.');
 
 const app = express();
 const PORT = process.env.PORT || 3004;

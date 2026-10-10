@@ -62,7 +62,8 @@ CREATE TRIGGER trg_pricing_rules_updated_at
 CREATE TABLE quotes (
     id               UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id        UUID         NOT NULL,
-    user_id          UUID         NOT NULL,  -- ref lógica → Auth DB
+    -- NULL for anonymous guest quotes; set when the customer accepts and submits contact data.
+    user_id          UUID,
     quota_reservation_id UUID,
     pricing_rule_id  UUID         NOT NULL,
     device_type_id   UUID         NOT NULL,  -- ref lógica → Catalog DB
@@ -80,7 +81,8 @@ CREATE TABLE quotes (
     parent_quote_id  UUID,
     -- HU-010: solo se aceptan cotizaciones vigentes.
     valid_until      TIMESTAMPTZ  NOT NULL,
-    status           VARCHAR(30)  NOT NULL DEFAULT 'PENDING',
+    -- ANONYMOUS: cotización sin usuario; PENDING: usuario identificado, esperando decisión.
+    status           VARCHAR(30)  NOT NULL DEFAULT 'ANONYMOUS',
     created_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
     updated_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
     CONSTRAINT fk_quotes_pricing_rule
@@ -99,7 +101,7 @@ CREATE TABLE quotes (
     CONSTRAINT ck_quotes_valid_until
         CHECK (valid_until > created_at),
     CONSTRAINT ck_quotes_status
-        CHECK (status IN ('PENDING', 'ACCEPTED', 'REJECTED', 'EXPIRED'))
+        CHECK (status IN ('ANONYMOUS', 'PENDING', 'ACCEPTED', 'REJECTED', 'EXPIRED'))
 );
 
 CREATE INDEX idx_quotes_tenant_user ON quotes (tenant_id, user_id);

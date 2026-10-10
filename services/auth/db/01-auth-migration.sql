@@ -19,13 +19,16 @@ $$ LANGUAGE plpgsql;
 -- ── Tenants ──────────────────────────────────────────────────
 -- HU-001: el contexto del tenant necesita su propia tabla.
 CREATE TABLE tenants (
-    id   UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
-    name VARCHAR(255) NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    id         UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    name       VARCHAR(255) NOT NULL,
+    slug       VARCHAR(60)  NOT NULL,
+    status     VARCHAR(20)  NOT NULL DEFAULT 'ACTIVE',
+    created_at TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ  NOT NULL DEFAULT now(),
     CONSTRAINT uq_tenants_name   UNIQUE (name),
-    CONSTRAINT ck_tenants_status CHECK (status IN ('ACTIVE', 'INACTIVE'))
+    CONSTRAINT uq_tenants_slug   UNIQUE (slug),
+    CONSTRAINT ck_tenants_status CHECK (status IN ('ACTIVE', 'INACTIVE')),
+    CONSTRAINT ck_tenants_slug   CHECK (slug ~ '^[a-z0-9]+(-[a-z0-9]+)*$')
 );
 
 CREATE TRIGGER trg_tenants_updated_at
@@ -78,8 +81,8 @@ CREATE INDEX idx_sessions_expires_at ON sessions (expires_at);
 
 -- ── Seed: tenant por defecto + SUPER_ADMIN ────────────────────
 -- El tenant 00000000-0000-0000-0000-000000000001 se usa en desarrollo.
-INSERT INTO tenants (id, name, status) VALUES
-    ('00000000-0000-0000-0000-000000000001', 'Reecicla Demo', 'ACTIVE')
+INSERT INTO tenants (id, name, slug, status) VALUES
+    ('00000000-0000-0000-0000-000000000001', 'Reecicla Demo', 'demo', 'ACTIVE')
 ON CONFLICT (id) DO NOTHING;
 
 -- SUPER_ADMIN: no pertenece a ningún tenant de negocio; usa el tenant de plataforma.

@@ -1,15 +1,16 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { DeviceTypeModel } from '../models/deviceTypeModel';
+import { resolveTenantId } from '../utils/tenant';
 
 export class CatalogController {
   static async listDeviceTypes(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
-      const requestedTenantId = req.query.tenant_id as string | undefined;
       const user = req.user;
       const includeInactive = req.query.include_inactive === 'true';
+      const tenantId = resolveTenantId(req);
 
-      if (user && user.role !== 'SUPER_ADMIN' && requestedTenantId && requestedTenantId !== user.tenantId) {
+      if (user && user.role !== 'SUPER_ADMIN' && tenantId && tenantId !== user.tenantId) {
         res.status(403).json({ error: 'No puedes consultar el catálogo de otro tenant.' });
         return;
       }
@@ -19,11 +20,8 @@ export class CatalogController {
         return;
       }
 
-      const tenantId = user?.role === 'SUPER_ADMIN'
-        ? requestedTenantId || user.tenantId
-        : user?.tenantId || requestedTenantId;
       if (!tenantId) {
-        res.status(400).json({ error: 'tenant_id es requerido.' });
+        res.status(400).json({ error: 'No se pudo determinar el contexto del negocio.' });
         return;
       }
 
@@ -37,11 +35,11 @@ export class CatalogController {
 
   static async createDeviceType(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
-      const tenantId = req.user?.tenantId;
+      const tenantId = resolveTenantId(req);
       const { code, name, description, accepts_quotes } = req.body;
 
       if (!tenantId || !code || !name) {
-        res.status(400).json({ error: 'tenant_id, code y name son requeridos.' });
+        res.status(400).json({ error: 'code, name y el contexto del negocio son requeridos.' });
         return;
       }
 
@@ -70,11 +68,11 @@ export class CatalogController {
   static async updateDeviceType(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const { id } = req.params;
-      const tenantId = req.user?.tenantId;
+      const tenantId = resolveTenantId(req);
       const { name, description, accepts_quotes, status } = req.body;
 
       if (!tenantId) {
-        res.status(400).json({ error: 'tenant_id es requerido.' });
+        res.status(400).json({ error: 'No se pudo determinar el contexto del negocio.' });
         return;
       }
 
@@ -103,10 +101,10 @@ export class CatalogController {
   static async inactivateDeviceType(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const { id } = req.params;
-      const tenantId = req.user?.tenantId;
+      const tenantId = resolveTenantId(req);
 
       if (!tenantId) {
-        res.status(400).json({ error: 'tenant_id es requerido.' });
+        res.status(400).json({ error: 'No se pudo determinar el contexto del negocio.' });
         return;
       }
 
