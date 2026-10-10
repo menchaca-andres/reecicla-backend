@@ -8,7 +8,7 @@ export interface AuthPayload {
 
 export interface QuoteAcceptedPayload {
   quote_id: string;
-  user_id: string;
+  user_id: string | null;
   device_type_id: string;
   device_type_name: string;
   brand: string | null;
@@ -19,6 +19,8 @@ export interface QuoteAcceptedPayload {
   currency: string;
   customer_name: string;
   customer_email: string;
+  customer_phone: string | null;
+  pickup_address: string | null;
   accepted_at: string;
 }
 

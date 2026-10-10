@@ -82,13 +82,14 @@ export class AuthController {
   static async requestGuestVerification(req: Request, res: Response): Promise<void> {
     try {
       const tenant_id = req.header('x-tenant-id')?.trim() || req.body?.tenant_id;
-      const { email, name, phone, quote_id } = req.body ?? {};
+      const { email, name, phone, address, quote_id } = req.body ?? {};
       await AuthService.requestGuestVerification({
         tenant_id: tenant_id || '',
         quote_id: quote_id || '',
         email: email || '',
         name: name || '',
         phone: phone || '',
+        address: address || '',
       });
       res.status(202).json({
         verification_required: true,
@@ -106,22 +107,20 @@ export class AuthController {
   static async verifyGuestClient(req: Request, res: Response): Promise<void> {
     try {
       const tenant_id = req.header('x-tenant-id')?.trim() || req.body?.tenant_id;
-      const { email, code, password, quote_id } = req.body ?? {};
+      const { email, code, quote_id } = req.body ?? {};
       const result = await AuthService.verifyGuestClient({
         tenant_id: tenant_id || '',
         quote_id: quote_id || '',
         email: email || '',
         code: code || '',
-        password: password || '',
       });
       res.status(200).json({
-        message: 'Correo verificado y cliente creado.',
+        message: 'Correo verificado.',
         ...result,
       });
     } catch (error: any) {
       const message = error.message || 'No se pudo verificar el correo.';
-      const statusCode = message.includes('ya tiene una cuenta') ? 409 :
-        message.includes('inválido o venció') ? 422 :
+      const statusCode = message.includes('inválido o venció') ? 422 :
           message.includes('requeridos') || message.includes('no es válido') ? 400 : 503;
       res.status(statusCode).json({ error: message });
     }

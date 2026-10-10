@@ -80,6 +80,7 @@ export class AuthService {
     email: string;
     name: string;
     phone: string;
+    address?: string;
   }): Promise<void> {
     const email = dto.email.trim();
     const name = dto.name.trim();
@@ -91,14 +92,6 @@ export class AuthService {
       throw new Error('El correo del cliente no es válido.');
     }
 
-    const existing = await UserModel.findAnyByEmailAndTenant(email, dto.tenant_id);
-    if (existing) {
-      if (existing.role !== 'CLIENT') {
-        throw new Error('Ese correo pertenece a un usuario interno y no puede usarse para aceptar una cotización.');
-      }
-      throw new Error('Ese correo ya tiene una cuenta en este negocio. Inicia sesión para aceptar la cotización.');
-    }
-
     const code = randomInt(100000, 1000000).toString();
     const verification = await GuestVerificationModel.create({
       tenant_id: dto.tenant_id,
@@ -106,6 +99,7 @@ export class AuthService {
       email,
       name,
       phone,
+      address: dto.address?.trim() ?? '',
     }, code);
     try {
       await EmailService.sendGuestVerification(email, name, code);
@@ -120,51 +114,18 @@ export class AuthService {
     quote_id: string;
     email: string;
     code: string;
-    password: string;
-  }): Promise<{ token: string; user: UserResponse; created: true }> {
+  }): Promise<{ tenant_id: string; quote_id: string; email: string; name: string; phone: string; address: string }> {
     const tenantId = dto.tenant_id.trim();
     const quoteId = dto.quote_id.trim();
     const email = dto.email.trim();
     const code = dto.code.trim();
-    const password = dto.password;
     if (!tenantId || !quoteId || !email || !/^\d{6}$/.test(code)) {
       throw new Error('El código de verificación y el contexto de la cotización son requeridos.');
-    }
-    if (password.length < 8) {
-      throw new Error('La contraseña debe tener al menos 8 caracteres.');
     }
 
     const verified = await GuestVerificationModel.consume(tenantId, quoteId, email, code);
     if (!verified) throw new Error('El código de verificación es inválido o venció.');
-
-    const existing = await UserModel.findAnyByEmailAndTenant(verified.email, tenantId);
-    if (existing) {
-      throw new Error('Ese correo ya tiene una cuenta en este negocio. Inicia sesión para aceptar la cotización.');
-    }
-
-    const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
-    const user = await UserModel.createUser({
-      tenant_id: verified.tenant_id,
-      email: verified.email,
-      name: verified.name,
-      phone: verified.phone,
-      role: 'CLIENT',
-    }, passwordHash);
-    const token = AuthService.signToken(user.id, user.tenant_id, user.email, user.role as UserRole, user.name);
-    const userResp = AuthService.toUserResponse(user);
-
-    publishEvent('auth.user.registered', {
-      event_type: 'user.registered',
-      tenant_id: user.tenant_id,
-      payload: {
-        user_id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-      },
-    }).catch((err) => console.error('Exception al publicar evento user.registered:', err));
-
-    return { token, user: userResp, created: true };
+    return verified;
   }
 
   private static signToken(userId: string, tenantId: string, email: string, role: UserRole, name?: string): string {

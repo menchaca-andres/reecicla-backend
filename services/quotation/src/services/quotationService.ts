@@ -84,11 +84,13 @@ async function updateQuoteReservation(reservationId: string, action: 'reserve' |
   }
 }
 
-export interface GuestClientSession {
-  user_id: string;
-  token: string;
-  user: { id: string; tenant_id: string; email: string; name: string; phone?: string; role: string };
-  created: boolean;
+export interface VerifiedGuestContact {
+  tenant_id: string;
+  quote_id: string;
+  email: string;
+  name: string;
+  phone: string;
+  address: string;
 }
 
 async function requestGuestVerification(
@@ -96,7 +98,8 @@ async function requestGuestVerification(
   quoteId: string,
   email: string,
   name: string,
-  phone: string
+  phone: string,
+  address: string
 ): Promise<void> {
   const response = await fetch(new URL('/api/auth/internal/guest-verifications', AUTH_SERVICE_URL), {
     method: 'POST',
@@ -105,7 +108,7 @@ async function requestGuestVerification(
       'x-internal-service-token': internalServiceToken(),
       'x-tenant-id': tenantId,
     },
-    body: JSON.stringify({ email, name, phone, tenant_id: tenantId, quote_id: quoteId }),
+    body: JSON.stringify({ email, name, phone, address, tenant_id: tenantId, quote_id: quoteId }),
   });
   const result = await response.json().catch(() => ({})) as {
     error?: string;
@@ -122,9 +125,8 @@ async function verifyGuestClient(
   tenantId: string,
   quoteId: string,
   email: string,
-  code: string,
-  password: string
-): Promise<GuestClientSession> {
+  code: string
+): Promise<VerifiedGuestContact> {
   const response = await fetch(new URL('/api/auth/internal/guest-verifications/verify', AUTH_SERVICE_URL), {
     method: 'POST',
     headers: {
@@ -132,24 +134,32 @@ async function verifyGuestClient(
       'x-internal-service-token': internalServiceToken(),
       'x-tenant-id': tenantId,
     },
-    body: JSON.stringify({ email, code, password, tenant_id: tenantId, quote_id: quoteId }),
+    body: JSON.stringify({ email, code, tenant_id: tenantId, quote_id: quoteId }),
   });
   const result = await response.json().catch(() => ({})) as {
     error?: string;
-    token?: string;
-    created?: boolean;
-    user?: GuestClientSession['user'];
+    tenant_id?: string;
+    quote_id?: string;
+    email?: string;
+    name?: string;
+    phone?: string;
+    address?: string;
   };
-  if (!response.ok || !result.token || !result.user?.id) {
+  if (
+    !response.ok || result.tenant_id !== tenantId || result.quote_id !== quoteId ||
+    !result.email || !result.name || !result.phone || typeof result.address !== 'string'
+  ) {
     const error = new Error(result.error || 'No se pudo verificar el correo del cliente.');
     Object.assign(error, { status: response.status });
     throw error;
   }
   return {
-    user_id: result.user.id,
-    token: result.token,
-    user: result.user,
-    created: Boolean(result.created),
+    tenant_id: result.tenant_id,
+    quote_id: result.quote_id,
+    email: result.email,
+    name: result.name,
+    phone: result.phone,
+    address: result.address,
   };
 }
 
@@ -247,8 +257,7 @@ export class QuotationService {
     address?: string;
     authenticated: boolean;
     verificationCode?: string;
-    password?: string;
-  }): Promise<{ quote?: Quote; session?: GuestClientSession; verificationRequired?: boolean }> {
+  }): Promise<{ quote?: Quote; verificationRequired?: boolean }> {
     let name = input.customerName.trim();
     let email = input.customerEmail.trim();
     let phone = (input.phone ?? '').trim();
@@ -276,23 +285,22 @@ export class QuotationService {
     }
 
     let userId = input.userId;
-    let session: GuestClientSession | undefined;
-    if (!userId) {
+    let address = input.address?.trim() ?? '';
+    if (!input.authenticated) {
       if (!input.verificationCode) {
-        await requestGuestVerification(input.tenantId, input.quoteId, email, name, phone);
+        await requestGuestVerification(input.tenantId, input.quoteId, email, name, phone, address);
         return { verificationRequired: true };
       }
-      session = await verifyGuestClient(
+      const verified = await verifyGuestClient(
         input.tenantId,
         input.quoteId,
         email,
-        input.verificationCode,
-        input.password ?? ''
+        input.verificationCode
       );
-      userId = session.user_id;
-      name = session.user.name;
-      email = session.user.email;
-      phone = session.user.phone ?? '';
+      name = verified.name;
+      email = verified.email;
+      phone = verified.phone;
+      address = verified.address;
     }
 
     const quote = await QuoteModel.acceptQuote(
@@ -302,9 +310,9 @@ export class QuotationService {
       name,
       email,
       phone || undefined,
-      input.address?.trim() || undefined
+      address || undefined
     );
-    return { quote, session };
+    return { quote };
   }
 
   static async getUserQuotes(tenantId: string, userId: string): Promise<Quote[]> {

@@ -7,6 +7,7 @@ export interface GuestVerificationDetails {
   email: string;
   name: string;
   phone: string;
+  address: string;
 }
 
 const CODE_TTL_MINUTES = 10;
@@ -49,15 +50,16 @@ export class GuestVerificationModel {
       const id = randomUUID();
       await client.query(
         `INSERT INTO guest_email_verifications (
-           id, tenant_id, quote_id, email, name, phone, code_hash, expires_at,
+           id, tenant_id, quote_id, email, name, phone, address, code_hash, expires_at,
            attempts, last_sent_at, verified_at, consumed_at
-         ) VALUES ($1, $2, $3, lower($4), $5, $6, $7,
-                   NOW() + ($8::int * INTERVAL '1 minute'), 0, NOW(), NULL, NULL)
+         ) VALUES ($1, $2, $3, lower($4), $5, $6, $7, $8,
+                   NOW() + ($9::int * INTERVAL '1 minute'), 0, NOW(), NULL, NULL)
          ON CONFLICT (tenant_id, quote_id) DO UPDATE
          SET id = EXCLUDED.id,
              email = EXCLUDED.email,
              name = EXCLUDED.name,
              phone = EXCLUDED.phone,
+             address = EXCLUDED.address,
              code_hash = EXCLUDED.code_hash,
              expires_at = EXCLUDED.expires_at,
              attempts = 0,
@@ -71,6 +73,7 @@ export class GuestVerificationModel {
           details.email,
           details.name,
           details.phone,
+          details.address,
           hashCode(code),
           CODE_TTL_MINUTES,
         ]
@@ -102,7 +105,7 @@ export class GuestVerificationModel {
     try {
       await client.query('BEGIN');
       const result = await client.query(
-        `SELECT tenant_id, quote_id, email, name, phone, code_hash, expires_at,
+        `SELECT tenant_id, quote_id, email, name, phone, address, code_hash, expires_at,
                 attempts, consumed_at
          FROM guest_email_verifications
          WHERE tenant_id = $1 AND quote_id = $2 AND lower(email) = lower($3)
@@ -146,6 +149,7 @@ export class GuestVerificationModel {
         email: verification.email,
         name: verification.name,
         phone: verification.phone,
+        address: verification.address,
       };
     } catch (error) {
       await client.query('ROLLBACK').catch(() => undefined);

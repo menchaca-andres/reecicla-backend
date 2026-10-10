@@ -43,7 +43,7 @@ La cotización sigue un flujo estricto de estados:
 ```
 
 - **Vigencia (`valid_until`)**: Cada cotización nace con un plazo de validez de 30 días. Superado este plazo, el servidor la marca como `EXPIRED` y rechaza su aceptación. Actualmente el plazo está fijado en código y no es configurable.
-- **Transición Guest $\rightarrow$ User**: Al momento de aceptar la cotización, se capturan los datos del cliente (`customer_name`, `customer_email`, `phone`, `address`). La cotización pasa a `ACCEPTED`, se genera el registro del usuario y se emite el evento para la orden de recolección.
+- **Aceptación Guest**: Al momento de aceptar la cotización, se capturan y verifican los datos del cliente (`customer_name`, `customer_email`, `phone`, `address`). La cotización pasa a `ACCEPTED` y se emite el evento para la orden de recolección. No se crea un usuario ni se emite un JWT; crear una cuenta después es opcional.
 
 ### 3. Persistencia en Cliente y Tokens de Acceso
 
@@ -87,7 +87,7 @@ Usar el almacenamiento del navegador como base de datos primaria de cotizaciones
 - **Rendimiento**: Consultas eficientes mediante índices parciales en Postgres (`status = 'ANONYMOUS'`, `valid_until`).
 - **Escalabilidad**: Política clara de limpieza para evitar crecimiento desmedido de registros huérfanos.
 
-**Estado de implementación:** se conserva el snapshot de precios y datos en el flujo normal; se actualizan estado y vínculo de usuario como parte del ciclo de vida. La inmutabilidad no está forzada actualmente mediante triggers o permisos de base de datos. El vencimiento está fijado en 30 días y la retención de 90 días también está fijada en código; se purgan cotizaciones anónimas rechazadas/vencidas tras ese plazo.
+**Estado de implementación:** se conserva el snapshot de precios y datos en el flujo normal; la aceptación invitada conserva `user_id` nulo y asocia la orden con el tenant y los datos de contacto verificados. La inmutabilidad no está forzada actualmente mediante triggers o permisos de base de datos. El vencimiento está fijado en 30 días y la retención de 90 días también está fijada en código; se purgan cotizaciones anónimas rechazadas/vencidas tras ese plazo.
 
 ---
 

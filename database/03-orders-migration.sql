@@ -24,7 +24,7 @@ CREATE TABLE orders (
     id                UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id         UUID         NOT NULL,
     order_number      VARCHAR(30)  NOT NULL,
-    user_id           UUID         NOT NULL,           -- ref lógica → Auth DB
+    user_id           UUID,                            -- ref lógica → Auth DB; NULL for guest orders
     quote_id          UUID         NOT NULL,           -- ref lógica → Quotation DB
     device_type_id    UUID         NOT NULL,           -- ref lógica → Catalog DB
     device_type_name  VARCHAR(120) NOT NULL,           -- snapshot
@@ -40,6 +40,7 @@ CREATE TABLE orders (
     status            VARCHAR(40)  NOT NULL DEFAULT 'ACCEPTED',
     customer_name     VARCHAR(255) NOT NULL,
     customer_email    VARCHAR(255) NOT NULL,
+    customer_phone    VARCHAR(50),
     pickup_address    JSONB,
     created_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
     updated_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),

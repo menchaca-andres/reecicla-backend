@@ -26,10 +26,11 @@ export class OrderModel {
         `INSERT INTO orders (
            tenant_id, order_number, user_id, quote_id, device_type_id,
            device_type_name, brand, model, device_year, declared_condition,
-           quoted_price, currency, status, customer_name, customer_email, accepted_at
+           quoted_price, currency, status, customer_name, customer_email, customer_phone,
+           pickup_address, accepted_at
          ) VALUES (
            $1, 'ORD-' || LPAD(nextval('order_number_seq')::text, 8, '0'),
-           $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'ACCEPTED', $12, $13, $14
+           $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'ACCEPTED', $12, $13, $14, $15::jsonb, $16
          )
          ON CONFLICT (tenant_id, quote_id) DO NOTHING
          RETURNING id, tenant_id, status`,
@@ -47,6 +48,8 @@ export class OrderModel {
           payload.currency,
           payload.customer_name,
           payload.customer_email,
+          payload.customer_phone,
+          payload.pickup_address ? JSON.stringify({ address: payload.pickup_address }) : null,
           payload.accepted_at,
         ]
       );

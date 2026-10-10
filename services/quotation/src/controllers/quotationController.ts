@@ -124,7 +124,6 @@ export class QuotationController {
       const phone = String(req.body?.phone || '').trim();
       const address = String(req.body?.address || '').trim();
       const verificationCode = String(req.body?.verification_code || '').trim();
-      const password = String(req.body?.password || '');
 
       if (!tenantId) {
         res.status(400).json({ error: 'No se pudo determinar el contexto del negocio.' });
@@ -146,7 +145,6 @@ export class QuotationController {
         address,
         authenticated: Boolean(userId),
         verificationCode: verificationCode || undefined,
-        password: password || undefined,
       });
       if (result.verificationRequired) {
         res.status(202).json({
@@ -161,7 +159,6 @@ export class QuotationController {
       res.status(200).json({
         message: 'Cotización aceptada; se está generando la orden.',
         quote: result.quote,
-        ...(result.session ? { token: result.session.token, user: result.session.user } : {}),
       });
     } catch (error: any) {
       const message = error.message || 'No se pudo aceptar la cotización.';

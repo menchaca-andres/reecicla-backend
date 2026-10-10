@@ -42,8 +42,8 @@ Los clientes finales **no se registran ni inician sesión** para obtener una cot
 2. El sistema calcula y devuelve el precio estimado **sin requerir autenticación**.
 3. Si el cliente **acepta** la cotización, recién entonces se le presenta un formulario para ingresar sus datos personales (nombre, teléfono, correo) para coordinar el retiro.
 4. El sistema envía un código de verificación de un solo uso al correo proporcionado. El código vence a los 10 minutos, permite hasta cinco intentos y su reenvío tiene un límite temporal.
-5. Al confirmar el código, el cliente define una contraseña; entonces se crea el `user`, se emite el JWT y la cotización se vincula a la cuenta.
-6. Si el correo ya corresponde a una cuenta existente en ese tenant, el cliente debe iniciar sesión; el flujo anónimo no activa cuentas existentes ni emite tokens para ellas.
+5. Al confirmar el código, la cotización se acepta y sus datos de contacto verificados se usan para generar la orden, sin crear un `user` ni emitir un JWT.
+6. La aceptación no depende de si ese correo ya tiene una cuenta. El cliente puede crear una cuenta después, de manera opcional; el pedido invitado permanece asociado al tenant y no se vincula automáticamente a una cuenta.
 
 Los usuarios internos (`INSPECTOR`, `CATALOG_ADMIN`, `TENANT_ADMIN`, `SUPER_ADMIN`) mantienen el flujo de login con JWT sin cambios.
 
@@ -75,7 +75,7 @@ El diseño original.
 | Tabla     | Cambio requerido                                                                   |
 |-----------|------------------------------------------------------------------------------------|
 | `tenants` | Agregar columna `slug VARCHAR(60) UNIQUE NOT NULL`                                 |
-| `users`   | No se crea un usuario mientras la cotización siga anónima; se crea tras verificar el correo al aceptar |
+| `users`   | No se crea ni requiere un usuario para cotizar o aceptar como invitado |
 | `quotes`  | Agregar estado `ANONYMOUS` previo a `PENDING` para cotizaciones sin usuario        |
 
 ### Impacto en el API Gateway
@@ -87,7 +87,7 @@ El diseño original.
 ### Impacto en Auth Service
 
 - El endpoint `POST /api/auth/register` deja de ser el punto de entrada del cliente final.
-- Se agregan endpoints internos para emitir y confirmar códigos de verificación por correo antes de convertir una cotización aceptada en un usuario registrado.
+- Se agregan endpoints internos para emitir y confirmar códigos de verificación por correo antes de aceptar una cotización invitada.
 - El envío se configura mediante SMTP; los códigos se guardan como hashes y nunca se devuelven al cliente.
 
 ### Impacto en Quotation Service
@@ -95,6 +95,7 @@ El diseño original.
 - `POST /api/quotation/quotes` pasa a ser público (sin middleware `authenticateToken`).
 - El `tenant_id` ya no viene del JWT ni del body: llega como header interno `X-Tenant-ID` inyectado por el Gateway.
 - El campo `user_id` pasa a ser `nullable` en la tabla `quotes` para soportar cotizaciones anónimas.
+- La orden admite `user_id` nulo y conserva los datos de contacto del cliente invitado junto con el `tenant_id`.
 
 ### Riesgos y Mitigaciones
 
@@ -112,3 +113,7 @@ El diseño original.
 - [Kata_PolloChingon.pdf](../Kata_PolloChingon.pdf) — Diseño original del sistema
 - [Reecicla definitivo.pdf](../Reecicla%20definitivo.pdf) — Especificación funcional completa
 - Discusión del equipo: 2026-10-09
+
+### Actualización — 2026-10-10
+
+El flujo de aceptación invitada se ajustó para no exigir ni crear cuentas. El correo se verifica por OTP y la cotización/orden se conserva en el tenant que inició el flujo. La creación de una cuenta queda como acción posterior opcional y no vincula automáticamente órdenes anteriores.

@@ -23,6 +23,8 @@ function createEvent() {
       currency: 'BOB',
       customer_name: 'Cliente de prueba',
       customer_email: 'orders-test@example.invalid',
+      customer_phone: '555-0100',
+      pickup_address: 'Dirección de prueba',
       accepted_at: new Date().toISOString(),
     },
   };
@@ -30,6 +32,15 @@ function createEvent() {
 
 test('valida un evento QuoteAccepted completo', () => {
   assert.doesNotThrow(() => validateQuoteAcceptedEvent(createEvent()));
+});
+
+test('valida una aceptación de invitado sin usuario asociado', () => {
+  const event = createEvent();
+  event.payload.user_id = null;
+  assert.doesNotThrow(() => validateQuoteAcceptedEvent(event));
+
+  event.payload.user_id = 'invalid-user-id';
+  assert.throws(() => validateQuoteAcceptedEvent(event), /usuario.*no es válido/);
 });
 
 test('rechaza un evento con un tipo desconocido', () => {
@@ -52,6 +63,7 @@ test('crea una orden y un solo estado inicial frente a eventos duplicados', { sk
   const { pool } = require('../dist/config/db');
   const { OrderModel } = require('../dist/models/orderModel');
   const event = createEvent();
+  event.payload.user_id = null;
   const duplicateEvent = { ...event, event_id: randomUUID(), correlation_id: randomUUID() };
 
   try {
@@ -68,6 +80,9 @@ test('crea una orden y un solo estado inicial frente a eventos duplicados', { sk
     assert.equal(orderResult.rows[0].model, event.payload.model);
     assert.equal(orderResult.rows[0].device_year, event.payload.year);
     assert.equal(orderResult.rows[0].declared_condition, event.payload.condition);
+    assert.equal(orderResult.rows[0].user_id, null);
+    assert.equal(orderResult.rows[0].customer_phone, event.payload.customer_phone);
+    assert.equal(orderResult.rows[0].pickup_address.address, event.payload.pickup_address);
 
     const historyResult = await pool.query(
       'SELECT * FROM order_status_history WHERE tenant_id = $1 AND order_id = $2',

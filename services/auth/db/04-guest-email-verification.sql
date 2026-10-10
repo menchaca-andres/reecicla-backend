@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS guest_email_verifications (
     email VARCHAR(255) NOT NULL,
     name VARCHAR(255) NOT NULL,
     phone VARCHAR(50) NOT NULL,
+    address TEXT NOT NULL DEFAULT '',
     code_hash CHAR(64) NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
     attempts SMALLINT NOT NULL DEFAULT 0,

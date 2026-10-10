@@ -69,12 +69,17 @@ Prefijo de negocio: `/recicla/{slug}/…`
 
 Los servicios internos solo son accesibles dentro de la red de Docker. El único puerto HTTP publicado es el Gateway (`3000`); las bases de datos y RabbitMQ están enlazados a `127.0.0.1` para uso local.
 
-En el Compose de desarrollo, los códigos de verificación se capturan localmente en Mailpit: abre `http://localhost:8025`. Tras confirmar el código, el cliente define una contraseña para acceder a su cuenta en el futuro. Para otro SMTP, configura `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD` y `SMTP_FROM` en el `.env` raíz. La migración `services/auth/db/04-guest-email-verification.sql` debe aplicarse a las bases Auth ya inicializadas; en bases nuevas Compose la carga automáticamente:
+En el Compose de desarrollo, los códigos de verificación se capturan localmente en Mailpit: abre `http://localhost:8025`. El cliente proporciona sus datos y verifica el correo para aceptar; no se crea una cuenta ni se requiere contraseña. Puede registrarse más adelante de manera opcional. Para otro SMTP, configura `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD` y `SMTP_FROM` en el `.env` raíz.
+
+En bases ya inicializadas, aplica las migraciones nuevas. En bases nuevas Compose las carga automáticamente:
 
 ```bash
 docker compose exec -T auth-db psql -U reecicla_user -d reecicla_auth_db \
   -v ON_ERROR_STOP=1 \
-  -f /docker-entrypoint-initdb.d/04-guest-email-verification.sql
+  -f /docker-entrypoint-initdb.d/05-guest-verification-address.sql
+docker compose exec -T orders-db psql -U reecicla_user -d reecicla_orders_db \
+  -v ON_ERROR_STOP=1 \
+  -f /docker-entrypoint-initdb.d/05-orders-anonymous-acceptance.sql
 ```
 
 Los comandos se ejecutan desde la carpeta `Reecicla`, donde está `docker-compose.yml`. Antes del primer inicio, copia `.env.example` a `.env` y define ambos valores como secretos aleatorios, distintos entre sí. No compartas el archivo `.env`.

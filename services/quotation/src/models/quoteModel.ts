@@ -50,7 +50,7 @@ export class QuoteModel {
   static async acceptQuote(
     quoteId: string,
     tenantId: string,
-    userId: string,
+    userId: string | null,
     customerName: string,
     customerEmail: string,
     customerPhone?: string,
@@ -79,10 +79,6 @@ export class QuoteModel {
       const eventId = randomUUID();
       const correlationId = randomUUID();
       const acceptedAt = new Date().toISOString();
-      if (!userId) {
-        throw new Error('La cotización no puede aceptarse sin un usuario asociado.');
-      }
-
       const payload = {
         quote_id: quote.id,
         user_id: userId,

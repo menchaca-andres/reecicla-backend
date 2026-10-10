@@ -183,7 +183,7 @@ CREATE UNIQUE INDEX uq_pricing_rules_one_active
 CREATE TABLE quotes (
     id UUID PRIMARY KEY,
     tenant_id UUID NOT NULL,
-    user_id UUID NOT NULL, -- ID externo del Auth DB
+    user_id UUID, -- ID externo del Auth DB; NULL para órdenes de clientes invitados
     pricing_rule_id UUID NOT NULL, -- ID local de pricing_rules
     device_type_id UUID NOT NULL, -- ID externo del Catalog DB
     device_type_name VARCHAR(120) NOT NULL, -- snapshot
@@ -264,6 +264,7 @@ CREATE TABLE orders (
     status VARCHAR(40) NOT NULL DEFAULT 'ACCEPTED',
     customer_name VARCHAR(255) NOT NULL,
     customer_email VARCHAR(255) NOT NULL,
+    customer_phone VARCHAR(50),
     pickup_address JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
