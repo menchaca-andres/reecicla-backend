@@ -5,7 +5,7 @@ import { DeviceModel } from '../models/deviceModel';
 export class DeviceController {
   static async listDevices(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
-      const tenantId = (req.query.tenant_id as string) || req.user?.tenantId;
+      const tenantId = req.header('x-tenant-id') || (req.query.tenant_id as string) || req.user?.tenantId;
       const deviceTypeId = req.query.device_type_id as string | undefined;
       const brandId = req.query.brand_id as string | undefined;
       const includeInactive = req.query.include_inactive === 'true';
@@ -26,7 +26,7 @@ export class DeviceController {
   static async getDevice(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const { id } = req.params;
-      const tenantId = (req.query.tenant_id as string) || req.user?.tenantId;
+      const tenantId = req.header('x-tenant-id') || (req.query.tenant_id as string) || req.user?.tenantId;
       if (!tenantId) {
         res.status(400).json({ error: 'tenant_id es requerido.' });
         return;
@@ -45,7 +45,7 @@ export class DeviceController {
 
   static async createDevice(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
-      const tenantId = req.user?.tenantId || req.body.tenant_id;
+      const tenantId = req.header('x-tenant-id') || req.user?.tenantId || req.body.tenant_id;
       const { device_type_id, brand_id, model, year, description } = req.body;
 
       if (!tenantId || !device_type_id || !brand_id || !model) {
@@ -80,7 +80,7 @@ export class DeviceController {
   static async updateDevice(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const { id } = req.params;
-      const tenantId = req.user?.tenantId || req.body.tenant_id;
+      const tenantId = req.header('x-tenant-id') || req.user?.tenantId || req.body.tenant_id;
       const { model, year, description, brand_id } = req.body;
 
       if (!tenantId) {
@@ -107,7 +107,7 @@ export class DeviceController {
   static async setDeviceStatus(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const { id } = req.params;
-      const tenantId = req.user?.tenantId || req.body.tenant_id;
+      const tenantId = req.header('x-tenant-id') || req.user?.tenantId || req.body.tenant_id;
       const { status } = req.body;
 
       if (!tenantId || !status || !['ACTIVE', 'INACTIVE'].includes(status)) {

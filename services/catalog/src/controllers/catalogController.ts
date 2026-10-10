@@ -3,9 +3,24 @@ import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { DeviceTypeModel } from '../models/deviceTypeModel';
 
 export class CatalogController {
+  static async bootstrapTenant(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const tenantId = req.body.tenant_id;
+    if (!tenantId) {
+      res.status(400).json({ error: 'tenant_id es requerido.' });
+      return;
+    }
+    try {
+      await DeviceTypeModel.bootstrapDefaults(tenantId);
+      res.json({ message: 'Catálogo inicializado.' });
+    } catch (error) {
+      console.error('[CatalogController.bootstrapTenant] Error:', error);
+      res.status(500).json({ error: 'No se pudo inicializar el catálogo del negocio.' });
+    }
+  }
+
   static async listDeviceTypes(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
-      const requestedTenantId = req.query.tenant_id as string | undefined;
+      const requestedTenantId = req.header('x-tenant-id') || req.query.tenant_id as string | undefined;
       const user = req.user;
       const includeInactive = req.query.include_inactive === 'true';
 
@@ -19,9 +34,7 @@ export class CatalogController {
         return;
       }
 
-      const tenantId = user?.role === 'SUPER_ADMIN'
-        ? requestedTenantId || user.tenantId
-        : user?.tenantId || requestedTenantId;
+      const tenantId = requestedTenantId || user?.tenantId;
       if (!tenantId) {
         res.status(400).json({ error: 'tenant_id es requerido.' });
         return;
@@ -37,7 +50,7 @@ export class CatalogController {
 
   static async createDeviceType(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
-      const tenantId = req.user?.tenantId;
+      const tenantId = req.header('x-tenant-id') || req.user?.tenantId;
       const { code, name, description, accepts_quotes } = req.body;
 
       if (!tenantId || !code || !name) {
@@ -70,7 +83,7 @@ export class CatalogController {
   static async updateDeviceType(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const { id } = req.params;
-      const tenantId = req.user?.tenantId;
+      const tenantId = req.header('x-tenant-id') || req.user?.tenantId;
       const { name, description, accepts_quotes, status } = req.body;
 
       if (!tenantId) {
@@ -103,7 +116,7 @@ export class CatalogController {
   static async inactivateDeviceType(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const { id } = req.params;
-      const tenantId = req.user?.tenantId;
+      const tenantId = req.header('x-tenant-id') || req.user?.tenantId;
 
       if (!tenantId) {
         res.status(400).json({ error: 'tenant_id es requerido.' });

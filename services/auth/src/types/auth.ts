@@ -1,9 +1,19 @@
 export interface Tenant {
   id: string;
   name: string;
+  slug: string;
   status: string;
   created_at: Date;
   updated_at: Date;
+}
+
+export interface CreateTenantDTO {
+  name: string;
+  slug: string;
+  email: string;
+  password: string;
+  admin_name?: string;
+  phone?: string;
 }
 
 export interface User {

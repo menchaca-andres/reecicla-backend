@@ -4,7 +4,11 @@ import { EvaluationRuleModel } from '../models/evaluationRuleModel';
 export class EvaluationRuleController {
   static async getActiveRule(req: Request, res: Response): Promise<void> {
     try {
-      const tenantId = (req.headers['x-tenant-id'] as string) || (req as any).user?.tenantId || '00000000-0000-0000-0000-000000000001';
+      const tenantId = (req.headers['x-tenant-id'] as string) || (req as any).user?.tenantId;
+      if (!tenantId) {
+        res.status(400).json({ error: 'El contexto del negocio es requerido.' });
+        return;
+      }
       const deviceTypeId = req.query.device_type_id as string;
 
       if (!deviceTypeId) {
@@ -22,7 +26,11 @@ export class EvaluationRuleController {
 
   static async getRuleHistory(req: Request, res: Response): Promise<void> {
     try {
-      const tenantId = (req.headers['x-tenant-id'] as string) || (req as any).user?.tenantId || '00000000-0000-0000-0000-000000000001';
+      const tenantId = (req.headers['x-tenant-id'] as string) || (req as any).user?.tenantId;
+      if (!tenantId) {
+        res.status(400).json({ error: 'El contexto del negocio es requerido.' });
+        return;
+      }
       const deviceTypeId = req.query.device_type_id as string;
 
       if (!deviceTypeId) {
@@ -40,7 +48,11 @@ export class EvaluationRuleController {
 
   static async getRuleById(req: Request, res: Response): Promise<void> {
     try {
-      const tenantId = (req.headers['x-tenant-id'] as string) || (req as any).user?.tenantId || '00000000-0000-0000-0000-000000000001';
+      const tenantId = (req.headers['x-tenant-id'] as string) || (req as any).user?.tenantId;
+      if (!tenantId) {
+        res.status(400).json({ error: 'El contexto del negocio es requerido.' });
+        return;
+      }
       const { id } = req.params;
 
       const rule = await EvaluationRuleModel.getRuleById(tenantId, id);
@@ -58,7 +70,11 @@ export class EvaluationRuleController {
 
   static async createRuleVersion(req: Request, res: Response): Promise<void> {
     try {
-      const tenantId = (req as any).user?.tenantId || (req.headers['x-tenant-id'] as string) || '00000000-0000-0000-0000-000000000001';
+      const tenantId = (req.headers['x-tenant-id'] as string) || (req as any).user?.tenantId;
+      if (!tenantId) {
+        res.status(400).json({ error: 'El contexto del negocio es requerido.' });
+        return;
+      }
       const { device_type_id, checklist, resale_criteria, recycle_criteria } = req.body;
 
       if (!device_type_id || !checklist || !Array.isArray(checklist)) {

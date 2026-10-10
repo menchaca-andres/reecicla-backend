@@ -7,6 +7,7 @@ import { authenticateOptionalToken, authenticateToken, authorizeRoles } from '..
 
 const router = Router();
 
+router.post('/bootstrap', authenticateToken, authorizeRoles('SUPER_ADMIN'), CatalogController.bootstrapTenant);
 router.get('/device-types', authenticateOptionalToken, CatalogController.listDeviceTypes);
 
 router.post('/device-types', authenticateToken, authorizeRoles('CATALOG_ADMIN', 'TENANT_ADMIN', 'SUPER_ADMIN'), CatalogController.createDeviceType);
@@ -38,4 +39,3 @@ router.get('/evaluation-rules/:id', EvaluationRuleController.getRuleById);
 router.post('/evaluation-rules', authenticateToken, authorizeRoles('CATALOG_ADMIN', 'TENANT_ADMIN', 'SUPER_ADMIN'), EvaluationRuleController.createRuleVersion);
 
 export default router;
-

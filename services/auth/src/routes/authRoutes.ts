@@ -9,6 +9,10 @@ const router = Router();
 router.post('/register', AuthController.register);
 
 router.post('/admin', authenticateToken, authorizeRoles('SUPER_ADMIN'), AuthController.createAdmin);
+router.post('/tenants', authenticateToken, authorizeRoles('SUPER_ADMIN'), AuthController.createTenant);
+router.get('/tenants', authenticateToken, authorizeRoles('SUPER_ADMIN'), AuthController.listTenants);
+router.get('/tenants/slug/:slug', AuthController.getTenantBySlug);
+router.get('/internal/tenants/slug/:slug', requireInternalService, AuthController.resolveTenantBySlug);
 
 router.post('/login', AuthController.login);
 

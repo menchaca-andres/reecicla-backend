@@ -2,6 +2,55 @@ import { pool } from '../config/db';
 import { DeviceType } from '../types/catalog';
 
 export class DeviceTypeModel {
+  static async bootstrapDefaults(tenantId: string): Promise<void> {
+    const client = await pool.connect();
+    const defaults = [
+      { code: 'REFRIGERATOR', name: 'Refrigerador', description: 'Refrigerador doméstico', brands: ['Samsung', 'LG', 'Whirlpool', 'Midea'] },
+      { code: 'WASHING_MACHINE', name: 'Lavadora', description: 'Lavadora doméstica', brands: ['Samsung', 'LG', 'Whirlpool'] },
+      { code: 'TV', name: 'Televisor', description: 'Televisor / Smart TV', brands: ['Samsung', 'LG', 'Sony', 'TCL'] },
+      { code: 'LAPTOP', name: 'Laptop', description: 'Notebook / Laptop', brands: ['Apple', 'Dell', 'Lenovo', 'HP', 'ASUS'] },
+      { code: 'SMARTPHONE', name: 'Smartphone', description: 'Celular / Smartphone', brands: ['Apple', 'Samsung', 'Xiaomi', 'Motorola'] },
+      { code: 'MICROWAVE', name: 'Horno de Microondas', description: 'Horno microondas doméstico', brands: ['Whirlpool', 'LG', 'Samsung', 'Panasonic'] },
+    ];
+    try {
+      await client.query('BEGIN');
+      for (const item of defaults) {
+        const typeResult = await client.query<{ id: string }>(
+          `INSERT INTO device_types (tenant_id, code, name, description)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (tenant_id, code) DO UPDATE SET code = EXCLUDED.code
+           RETURNING id`,
+          [tenantId, item.code, item.name, item.description]
+        );
+        const deviceTypeId = typeResult.rows[0].id;
+        for (const brand of item.brands) {
+          await client.query(
+            `INSERT INTO device_brands (tenant_id, device_type_id, name)
+             VALUES ($1, $2, $3) ON CONFLICT (tenant_id, device_type_id, name) DO NOTHING`,
+            [tenantId, deviceTypeId, brand]
+          );
+        }
+        await client.query(
+          `INSERT INTO evaluation_rules
+             (tenant_id, device_type_id, version, checklist, resale_criteria, recycle_criteria)
+           VALUES ($1, $2, 1,
+             '[{"id":"power_on","label":"¿El equipo enciende?","type":"boolean","required":true},
+               {"id":"cosmetic_condition","label":"Estado estético (1-10)","type":"number","required":true}]'::jsonb,
+             '{"min_cosmetic_score":6,"must_power_on":true}'::jsonb,
+             '{"accept_damaged":true,"recycle_components":true}'::jsonb)
+           ON CONFLICT (device_type_id) WHERE is_active DO NOTHING`,
+          [tenantId, deviceTypeId]
+        );
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   static async getDeviceTypes(tenantId: string, includeInactive = false): Promise<DeviceType[]> {
     const query = includeInactive
       ? 'SELECT * FROM device_types WHERE tenant_id = $1 ORDER BY name ASC'

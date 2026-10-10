@@ -21,6 +21,11 @@ export const authenticateToken = (
 
   try {
     req.authUser = jwt.verify(token, JWT_SECRET) as AuthPayload;
+    const tenantId = req.header('x-tenant-id');
+    if (tenantId && req.authUser.role !== 'SUPER_ADMIN' && tenantId !== req.authUser.tenantId) {
+      res.status(403).json({ error: 'Tu sesión no pertenece al negocio solicitado.' });
+      return;
+    }
     next();
   } catch {
     res.status(403).json({ error: 'Token inválido o expirado.' });

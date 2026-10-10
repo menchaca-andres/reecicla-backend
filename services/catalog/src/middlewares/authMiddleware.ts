@@ -8,6 +8,15 @@ export interface AuthenticatedRequest extends Request {
   user?: AuthPayload;
 }
 
+const matchesTenantContext = (req: AuthenticatedRequest, res: Response): boolean => {
+  const tenantId = req.header('x-tenant-id');
+  if (tenantId && req.user && req.user.role !== 'SUPER_ADMIN' && tenantId !== req.user.tenantId) {
+    res.status(403).json({ error: 'Tu sesión no pertenece al negocio solicitado.' });
+    return false;
+  }
+  return true;
+};
+
 export const authenticateOptionalToken = (
   req: AuthenticatedRequest,
   res: Response,
@@ -27,6 +36,7 @@ export const authenticateOptionalToken = (
 
   try {
     req.user = jwt.verify(token, JWT_SECRET) as AuthPayload;
+    if (!matchesTenantContext(req, res)) return;
     next();
   } catch {
     res.status(403).json({ error: 'Token inválido o expirado.' });
@@ -49,6 +59,7 @@ export const authenticateToken = (
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as AuthPayload;
     req.user = decoded;
+    if (!matchesTenantContext(req, res)) return;
     next();
   } catch (error) {
     res.status(403).json({ error: 'Token inválido o expirado.' });

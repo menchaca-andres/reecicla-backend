@@ -23,6 +23,11 @@ export const authenticateToken = (
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as AuthPayload;
+    const tenantId = req.header('x-tenant-id');
+    if (tenantId && decoded.role !== 'SUPER_ADMIN' && tenantId !== decoded.tenantId) {
+      res.status(403).json({ error: 'Tu sesión no pertenece al negocio solicitado.' });
+      return;
+    }
     req.authUser = decoded;
     next();
   } catch (error) {
