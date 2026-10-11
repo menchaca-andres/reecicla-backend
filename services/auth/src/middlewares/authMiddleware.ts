@@ -47,3 +47,19 @@ export const authorizeRoles = (...allowedRoles: UserRole[]) => {
     next();
   };
 };
+
+export const authorizePlatformAdmin = (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): void => {
+  if (!req.authUser) {
+    res.status(401).json({ error: 'Usuario no autenticado.' });
+    return;
+  }
+  if (req.authUser.role !== 'SUPER_ADMIN' || req.authUser.scope !== 'platform') {
+    res.status(403).json({ error: 'Se requiere una sesión de administrador de plataforma.' });
+    return;
+  }
+  next();
+};

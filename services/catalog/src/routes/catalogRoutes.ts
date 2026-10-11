@@ -3,11 +3,11 @@ import { CatalogController } from '../controllers/catalogController';
 import { BrandController } from '../controllers/brandController';
 import { DeviceController } from '../controllers/deviceController';
 import { EvaluationRuleController } from '../controllers/evaluationRuleController';
-import { authenticateOptionalToken, authenticateToken, authorizeRoles } from '../middlewares/authMiddleware';
+import { authenticateOptionalToken, authenticatePlatformAdmin, authenticateToken, authorizeRoles } from '../middlewares/authMiddleware';
 
 const router = Router();
 
-router.post('/bootstrap', authenticateToken, authorizeRoles('SUPER_ADMIN'), CatalogController.bootstrapTenant);
+router.post('/bootstrap', authenticatePlatformAdmin, CatalogController.bootstrapTenant);
 router.get('/device-types', authenticateOptionalToken, CatalogController.listDeviceTypes);
 
 router.post('/device-types', authenticateToken, authorizeRoles('CATALOG_ADMIN', 'TENANT_ADMIN', 'SUPER_ADMIN'), CatalogController.createDeviceType);

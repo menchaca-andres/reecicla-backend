@@ -36,7 +36,11 @@ El **API Gateway** intercepta cada request bajo `/recicla/{slug}/api/...`, resue
 
 El alta de negocios está reservada al `SUPER_ADMIN`: `POST /api/auth/tenants` crea el tenant y su primer `TENANT_ADMIN` en una única transacción Auth DB. El catálogo vive en otra base de datos y se inicializa con una operación interna idempotente posterior; si falla, el alta permanece creada y el Super Admin puede reintentar la inicialización.
 
+La identidad `SUPER_ADMIN` es una cuenta de plataforma almacenada en `platform_admins`, separada de `users` y sin `tenant_id`. Inicia sesión mediante `POST /api/auth/platform/login` desde el portal `/admin`; su JWT lleva `scope: "platform"` y solo autoriza operaciones administrativas de plataforma. Los tokens de plataforma no pueden utilizar endpoints funcionales de un negocio.
+
 La migración `services/auth/db/06-tenant-slugs.sql` se monta para bases nuevas. En instalaciones con volúmenes ya creados, ejecutar ese archivo manualmente contra `reecicla_auth_db`; los scripts de inicialización de Postgres no se vuelven a ejecutar al reiniciar contenedores.
+
+La migración `services/auth/db/07-platform-admins.sql` traslada los Super Admin existentes fuera de `users`, preserva sus contraseñas y elimina las sesiones anteriores. Aplicarla manualmente a volúmenes ya inicializados.
 
 ### 2. Cotización Anónima (Guest Quotation)
 

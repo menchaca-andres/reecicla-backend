@@ -82,8 +82,8 @@ INSERT INTO tenants (id, name, status) VALUES
     ('00000000-0000-0000-0000-000000000001', 'Reecicla Demo', 'ACTIVE')
 ON CONFLICT (id) DO NOTHING;
 
--- SUPER_ADMIN: no pertenece a ningún tenant de negocio; usa el tenant de plataforma.
--- Contraseña: superadmin123 (bcrypt, 10 rounds)
+-- Cuenta de transición de desarrollo. La migración 07 la mueve a platform_admins
+-- y convierte el valor semilla a bcrypt si aún no es un hash.
 INSERT INTO users (tenant_id, email, password_hash, name, role) VALUES
     (
         '00000000-0000-0000-0000-000000000001',

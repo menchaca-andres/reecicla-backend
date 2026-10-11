@@ -1,9 +1,10 @@
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { UserModel } from '../models/userModel';
-import { RegisterDTO, CreateAdminDTO, LoginDTO, AuthPayload, UserResponse, UserRole, CreateTenantDTO } from '../types/auth';
+import { RegisterDTO, CreateAdminDTO, LoginDTO, AuthPayload, UserResponse, UserRole, CreateTenantDTO, PlatformAdminResponse } from '../types/auth';
 import { publishEvent } from '../messaging/eventBus';
 import { TenantModel, TenantSummary } from '../models/tenantModel';
+import { PlatformAdminModel } from '../models/platformAdminModel';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'default_jwt_secret_reecicla';
 const SALT_ROUNDS = 10;
@@ -72,6 +73,30 @@ export class AuthService {
     if (!isMatch) throw new Error('Credenciales inválidas o tenant incorrecto.');
     const token = AuthService.signToken(user.id, user.tenant_id, user.email, user.role as UserRole, user.name);
     return { token, user: AuthService.toUserResponse(user) };
+  }
+
+  static async loginPlatform(email: string, password: string): Promise<{ token: string; user: PlatformAdminResponse }> {
+    const admin = await PlatformAdminModel.findActiveByEmail(email);
+    if (!admin || !(await bcrypt.compare(password, admin.password_hash))) {
+      throw new Error('Credenciales inválidas.');
+    }
+    const payload: AuthPayload = {
+      userId: admin.id,
+      email: admin.email,
+      name: admin.name,
+      role: 'SUPER_ADMIN',
+      scope: 'platform',
+    };
+    return {
+      token: jwt.sign(payload, JWT_SECRET, { expiresIn: '24h' }),
+      user: PlatformAdminModel.toResponse(admin),
+    };
+  }
+
+  static async getPlatformAdminProfile(userId: string): Promise<PlatformAdminResponse> {
+    const admin = await PlatformAdminModel.findActiveById(userId);
+    if (!admin) throw new Error('Administrador de plataforma no encontrado.');
+    return PlatformAdminModel.toResponse(admin);
   }
 
   static async getUserProfile(userId: string): Promise<UserResponse> {

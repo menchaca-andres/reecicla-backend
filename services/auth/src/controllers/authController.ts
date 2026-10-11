@@ -3,6 +3,33 @@ import { AuthService } from '../services/authService';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 
 export class AuthController {
+  static async platformLogin(req: Request, res: Response): Promise<void> {
+    try {
+      const { email, password } = req.body;
+      if (typeof email !== 'string' || typeof password !== 'string' || !email.trim() || !password) {
+        res.status(400).json({ error: 'Correo y contraseña son requeridos.' });
+        return;
+      }
+      const result = await AuthService.loginPlatform(email, password);
+      res.json({ message: 'Inicio de sesión de plataforma exitoso.', ...result });
+    } catch (error: any) {
+      res.status(401).json({ error: error.message || 'No se pudo iniciar sesión en la plataforma.' });
+    }
+  }
+
+  static async getPlatformProfile(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.authUser) {
+        res.status(401).json({ error: 'Usuario no autenticado.' });
+        return;
+      }
+      const user = await AuthService.getPlatformAdminProfile(req.authUser.userId);
+      res.json({ user });
+    } catch (error: any) {
+      res.status(404).json({ error: error.message || 'Administrador de plataforma no encontrado.' });
+    }
+  }
+
   static async register(req: Request, res: Response): Promise<void> {
     try {
       const tenant_id = req.header('x-tenant-id') || req.body.tenant_id;

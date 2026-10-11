@@ -23,18 +23,19 @@ export interface User {
   password_hash: string;
   name: string;
   phone?: string;
-  role: UserRole;
+  role: TenantUserRole;
   is_active: boolean;
   created_at: Date;
   updated_at: Date;
 }
 
-export type UserRole =
-  | 'SUPER_ADMIN'
+export type TenantUserRole =
   | 'TENANT_ADMIN'
   | 'CATALOG_ADMIN'
   | 'INSPECTOR'
   | 'CLIENT';
+
+export type UserRole = TenantUserRole | 'SUPER_ADMIN';
 
 export interface RegisterDTO {
   tenant_id: string;
@@ -50,7 +51,7 @@ export interface CreateAdminDTO {
   password: string;
   name?: string;
   phone?: string;
-  role?: UserRole; // permite crear TENANT_ADMIN, CATALOG_ADMIN, INSPECTOR
+  role?: Exclude<TenantUserRole, 'CLIENT'>;
 }
 
 export interface LoginDTO {
@@ -61,10 +62,11 @@ export interface LoginDTO {
 
 export interface AuthPayload {
   userId: string;
-  tenantId: string;
+  tenantId?: string;
   email: string;
   name?: string;
   role: UserRole;
+  scope?: 'tenant' | 'platform';
 }
 
 export interface UserResponse {
@@ -73,6 +75,13 @@ export interface UserResponse {
   email: string;
   name: string;
   phone?: string;
-  role: UserRole;
+  role: TenantUserRole;
   created_at: Date;
+}
+
+export interface PlatformAdminResponse {
+  id: string;
+  email: string;
+  name: string;
+  role: 'SUPER_ADMIN';
 }
