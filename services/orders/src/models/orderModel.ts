@@ -193,23 +193,16 @@ export class OrderModel {
       );
 
       await client.query(
+        `SELECT set_config('reecicla.operator_user_id', $1, true),
+                set_config('reecicla.status_reason', $2, true)`,
+        [operatorUserId, `Guía de envío registrada: ${trackingCode}`]
+      );
+
+      await client.query(
         `UPDATE orders
          SET status = $1, updated_at = NOW()
          WHERE id = $2 AND tenant_id = $3`,
         [newStatus, orderId, tenantId]
-      );
-
-      await client.query(
-        `INSERT INTO order_status_history (tenant_id, order_id, previous_status, new_status, changed_by_user, reason)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [
-          tenantId,
-          orderId,
-          order.status,
-          newStatus,
-          operatorUserId,
-          `Guía de envío registrada: ${trackingCode}`,
-        ]
       );
 
       await client.query('COMMIT');
@@ -217,6 +210,80 @@ export class OrderModel {
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  static async receiveOrder(
+    tenantId: string,
+    orderId: string,
+    operatorUserId: string
+  ): Promise<{ id: string; tenant_id: string; status: 'RECEIVED'; device_type_id: string; device_type_name: string; received_at: Date }> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const orderResult = await client.query(
+        `SELECT id, tenant_id, status, device_type_id, device_type_name, received_at
+         FROM orders
+         WHERE id = $1 AND tenant_id = $2
+         FOR UPDATE`,
+        [orderId, tenantId]
+      );
+      if (!orderResult.rows[0]) throw new Error('Orden no encontrada.');
+
+      const order = orderResult.rows[0];
+      if (order.status !== 'IN_TRANSIT' && order.status !== 'RECEIVED') {
+        throw new Error(`No se puede registrar la recepción desde el estado ${order.status}; la orden debe estar IN_TRANSIT.`);
+      }
+
+      let receivedAt: Date;
+      if (order.status === 'RECEIVED') {
+        receivedAt = order.received_at;
+      } else {
+        await client.query(
+          `SELECT set_config('reecicla.operator_user_id', $1, true),
+                  set_config('reecicla.status_reason', $2, true)`,
+          [operatorUserId, 'Equipo recibido en almacén']
+        );
+        const updated = await client.query(
+          `UPDATE orders
+           SET status = 'RECEIVED', received_at = NOW(), updated_at = NOW()
+           WHERE id = $1 AND tenant_id = $2
+           RETURNING received_at`,
+          [orderId, tenantId]
+        );
+        receivedAt = updated.rows[0].received_at;
+      }
+
+      const payload = {
+        order_id: orderId,
+        device_type_id: order.device_type_id,
+        device_type_name: order.device_type_name,
+        received_at: receivedAt.toISOString(),
+        received_by_user_id: operatorUserId,
+      };
+      await client.query(
+        `INSERT INTO domain_event_outbox (
+           tenant_id, aggregate_id, correlation_id, event_type, routing_key, payload
+         ) VALUES ($1, $2, $2, 'DeviceReceived', 'device.received', $3::jsonb)
+         ON CONFLICT (aggregate_id, event_type) DO NOTHING`,
+        [tenantId, orderId, JSON.stringify(payload)]
+      );
+
+      await client.query('COMMIT');
+      return {
+        id: orderId,
+        tenant_id: tenantId,
+        status: 'RECEIVED',
+        device_type_id: order.device_type_id,
+        device_type_name: order.device_type_name,
+        received_at: receivedAt,
+      };
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
     } finally {
       client.release();
     }
