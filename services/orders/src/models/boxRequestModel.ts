@@ -44,16 +44,15 @@ export class BoxRequestModel {
       // 3. Transition the order to BOX_REQUESTED (only if it was ACCEPTED)
       if (order.status === 'ACCEPTED') {
         await client.query(
+          `SELECT set_config('reecicla.operator_user_id', $1, true),
+                  set_config('reecicla.status_reason', $2, true)`,
+          [userId, 'Cliente solicitó caja de envío']
+        );
+        await client.query(
           `UPDATE orders
            SET status = 'BOX_REQUESTED', pickup_address = $1, updated_at = NOW()
            WHERE id = $2`,
           [JSON.stringify(address), orderId]
-        );
-
-        await client.query(
-          `INSERT INTO order_status_history (tenant_id, order_id, previous_status, new_status, changed_by_user, reason)
-           VALUES ($1, $2, 'ACCEPTED', 'BOX_REQUESTED', $3, 'Cliente solicitó caja de envío')`,
-          [tenantId, orderId, userId]
         );
       }
 
