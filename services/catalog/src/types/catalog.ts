@@ -6,6 +6,14 @@ export interface AuthPayload {
   role: UserRole;
 }
 
+export interface DeviceReceivedPayload {
+  order_id: string;
+  device_type_id: string;
+  device_type_name: string;
+  received_at: string;
+  received_by_user_id: string;
+}
+
 export type DeviceTypeStatus = 'ACTIVE' | 'INACTIVE';
 
 export interface DeviceType {

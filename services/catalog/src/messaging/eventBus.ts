@@ -1,5 +1,5 @@
 import amqp, { ChannelModel, Channel, ConsumeMessage } from 'amqplib';
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import crypto from 'crypto';
 
 export interface DomainEvent<T = any> {
@@ -27,7 +27,7 @@ const MAIN_EXCHANGE = 'reecicla.events';
 export async function getRabbitChannel(): Promise<Channel> {
   if (activeChannel) return activeChannel;
 
-  let retries = 5;
+  let retries = 12;
   while (retries > 0) {
     try {
       connection = await amqp.connect(RABBITMQ_URL);
@@ -77,7 +77,7 @@ export async function subscribeEvent<T>(
   queueName: string,
   routingKey: string,
   dbPool: Pool,
-  handler: (event: DomainEvent<T>) => Promise<void>
+  handler: (event: DomainEvent<T>, client: PoolClient) => Promise<void>
 ): Promise<void> {
   const ch = await getRabbitChannel();
 
@@ -98,26 +98,36 @@ export async function subscribeEvent<T>(
         return;
       }
 
-      const result = await dbPool.query(
-        `INSERT INTO processed_events (event_id, event_type, tenant_id)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (event_id) DO NOTHING
-         RETURNING event_id;`,
-        [event.event_id, event.event_type, event.tenant_id || null]
-      );
+      const client = await dbPool.connect();
+      try {
+        await client.query('BEGIN');
+        const result = await client.query(
+          `INSERT INTO processed_events (event_id, event_type, tenant_id)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (event_id) DO NOTHING
+           RETURNING event_id;`,
+          [event.event_id, event.event_type, event.tenant_id || null]
+        );
 
+        if (result.rowCount === 0) {
+          await client.query('COMMIT');
+          console.log(`[Idempotencia TE-02] Evento duplicado detectado: ${event.event_id} (${event.event_type}). Ignorando sin duplicar efectos.`);
+          ch.ack(msg);
+          return;
+        }
 
-      if (result.rowCount === 0) {
-        console.log(`[Idempotencia TE-02] Evento duplicado detectado: ${event.event_id} (${event.event_type}). Ignorando sin duplicar efectos.`);
+        await handler(event, client);
+        await client.query('COMMIT');
         ch.ack(msg);
-        return;
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        throw error;
+      } finally {
+        client.release();
       }
-
-      await handler(event);
-      ch.ack(msg);
     } catch (error) {
       console.error(`Error procesando evento en cola ${queueName}:`, error);
-      ch.nack(msg, false, false);
+      ch.nack(msg, false, true);
     }
   });
 }

@@ -26,3 +26,19 @@ export const authenticateToken = (
     res.status(403).json({ error: 'Token inválido o expirado.' });
   }
 };
+
+export const authorizeRoles = (...allowedRoles: string[]) => {
+  return (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
+    if (!req.authUser) {
+      res.status(401).json({ error: 'Usuario no autenticado.' });
+      return;
+    }
+
+    if (!allowedRoles.includes(req.authUser.role)) {
+      res.status(403).json({ error: 'No tienes permisos para gestionar la logística.' });
+      return;
+    }
+
+    next();
+  };
+};

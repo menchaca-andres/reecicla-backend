@@ -31,6 +31,14 @@ export interface DomainEvent<T> {
   payload: T;
 }
 
+export interface DeviceReceivedPayload {
+  order_id: string;
+  device_type_id: string;
+  device_type_name: string;
+  received_at: string;
+  received_by_user_id: string;
+}
+
 export type BoxRequestStatus = 'REQUESTED' | 'SHIPPED' | 'DELIVERED' | 'LOST' | 'CANCELLED';
 
 export interface BoxRequest {
