@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { OrderModel } from '../models/orderModel';
+import { dispatchPendingOrderEvents } from '../messaging/eventPublisher';
 
 export class OrderController {
   static async listMine(req: AuthenticatedRequest, res: Response): Promise<void> {
@@ -74,6 +75,36 @@ export class OrderController {
     } catch (error: any) {
       console.error('[Orders] Error al despachar la orden:', error);
       res.status(400).json({ error: error.message || 'Error al despachar la orden.' });
+    }
+  }
+
+  static async receive(req: AuthenticatedRequest, res: Response): Promise<void> {
+    if (!req.authUser) {
+      res.status(401).json({ error: 'Usuario no autenticado.' });
+      return;
+    }
+
+    try {
+      const order = await OrderModel.receiveOrder(
+        req.authUser.tenantId,
+        req.params.id,
+        req.authUser.userId
+      );
+      try {
+        await dispatchPendingOrderEvents();
+      } catch (error) {
+        console.error('[Orders] Recepción guardada; DeviceReceived permanece en outbox:', error);
+      }
+      res.status(200).json({
+        message: 'Recepción registrada. El catálogo actualizará la última fecha de recepción.',
+        order,
+      });
+    } catch (error: any) {
+      const message = error.message || 'No se pudo registrar la recepción.';
+      const status = message === 'Orden no encontrada.' ? 404 :
+        message.startsWith('No se puede registrar la recepción') ? 409 : 500;
+      console.error('[Orders] Error al registrar recepción:', error);
+      res.status(status).json({ error: message });
     }
   }
 }
