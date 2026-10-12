@@ -33,7 +33,7 @@ export class AuthController {
   // Superadmin endpoint to create a Tenant Admin
   static async createAdmin(req: Request, res: Response): Promise<void> {
     try {
-      const { tenant_id, email, password, name, phone } = req.body;
+      const { tenant_id, email, password, name, phone, role } = req.body;
 
       if (!tenant_id || !email || !password) {
         res.status(400).json({ error: 'tenant_id, email y password son requeridos.' });
@@ -46,6 +46,7 @@ export class AuthController {
         password,
         name,
         phone,
+        role,
       });
 
       res.status(201).json({
