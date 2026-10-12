@@ -32,7 +32,15 @@ El `tenant_id` (UUID interno) deja de ser responsabilidad del cliente. En su lug
 reecicla.com/recicla/{slug}
 ```
 
-El **API Gateway** intercepta cada request, extrae el `slug` del path o del subdominio, lo resuelve a un `tenant_id` interno (consultando la tabla `tenants`), y lo inyecta como header interno (`X-Tenant-ID`) hacia los microservicios. Ningún microservicio downstream recibe ni valida el `slug`; todos trabajan con el UUID interno.
+El **API Gateway** intercepta cada request bajo `/recicla/{slug}/api/...`, resuelve el `slug` mediante Auth Service y lo inyecta como header interno `X-Tenant-ID` hacia los microservicios. Ningún microservicio downstream recibe ni valida el `slug`; todos trabajan con el UUID interno. El UUID no se acepta desde el cliente cuando se usa esta ruta.
+
+El alta de negocios está reservada al `SUPER_ADMIN`: `POST /api/auth/tenants` crea el tenant y su primer `TENANT_ADMIN` en una única transacción Auth DB. El catálogo vive en otra base de datos y se inicializa con una operación interna idempotente posterior; si falla, el alta permanece creada y el Super Admin puede reintentar la inicialización.
+
+La identidad `SUPER_ADMIN` es una cuenta de plataforma almacenada en `platform_admins`, separada de `users` y sin `tenant_id`. Inicia sesión mediante `POST /api/auth/platform/login` desde el portal `/admin`; su JWT lleva `scope: "platform"` y solo autoriza operaciones administrativas de plataforma. Los tokens de plataforma no pueden utilizar endpoints funcionales de un negocio.
+
+La migración `services/auth/db/06-tenant-slugs.sql` se monta para bases nuevas. En instalaciones con volúmenes ya creados, ejecutar ese archivo manualmente contra `reecicla_auth_db`; los scripts de inicialización de Postgres no se vuelven a ejecutar al reiniciar contenedores.
+
+La migración `services/auth/db/07-platform-admins.sql` traslada los Super Admin existentes fuera de `users`, preserva sus contraseñas y elimina las sesiones anteriores. Aplicarla manualmente a volúmenes ya inicializados.
 
 ### 2. Cotización Anónima (Guest Quotation)
 
@@ -80,9 +88,11 @@ El diseño original.
 
 ### Impacto en el API Gateway
 
-- Nuevo middleware de resolución de tenant: `slug → tenant_id`.
+- Resolver `/recicla/{slug}/api/...` a `tenant_id` y enviar `X-Tenant-ID` a cada servicio.
 - Cache recomendado (en memoria o Redis) para evitar una consulta a DB en cada request.
 - Si el slug no existe, responder `404` antes de rutear.
+- La resolución utiliza un endpoint de Auth Service autenticado con `INTERNAL_SERVICE_TOKEN`.
+- La ruta antigua `/api/...` se conserva temporalmente para compatibilidad con la instancia demo; las rutas nuevas deben usar `/recicla/{slug}/api/...`.
 
 ### Impacto en Auth Service
 

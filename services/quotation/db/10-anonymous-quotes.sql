@@ -1,0 +1,14 @@
+BEGIN;
+
+ALTER TABLE quotes
+    ALTER COLUMN user_id DROP NOT NULL,
+    ALTER COLUMN status SET DEFAULT 'ANONYMOUS';
+
+ALTER TABLE quotes
+    DROP CONSTRAINT IF EXISTS ck_quotes_status;
+
+ALTER TABLE quotes
+    ADD CONSTRAINT ck_quotes_status
+    CHECK (status IN ('ANONYMOUS', 'PENDING', 'ACCEPTED', 'REJECTED', 'EXPIRED'));
+
+COMMIT;

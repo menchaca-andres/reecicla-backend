@@ -91,6 +91,12 @@ En bases ya inicializadas, aplica las migraciones nuevas. En bases nuevas Compos
 ```bash
 docker compose exec -T auth-db psql -U reecicla_user -d reecicla_auth_db \
   -v ON_ERROR_STOP=1 \
+  -f /docker-entrypoint-initdb.d/06-tenant-slugs.sql
+docker compose exec -T auth-db psql -U reecicla_user -d reecicla_auth_db \
+  -v ON_ERROR_STOP=1 \
+  -f /docker-entrypoint-initdb.d/07-platform-admins.sql
+docker compose exec -T auth-db psql -U reecicla_user -d reecicla_auth_db \
+  -v ON_ERROR_STOP=1 \
   -f /docker-entrypoint-initdb.d/05-guest-verification-address.sql
 docker compose exec -T orders-db psql -U reecicla_user -d reecicla_orders_db \
   -v ON_ERROR_STOP=1 \
@@ -98,9 +104,12 @@ docker compose exec -T orders-db psql -U reecicla_user -d reecicla_orders_db \
 docker compose exec -T orders-db psql -U reecicla_user -d reecicla_orders_db \
   -v ON_ERROR_STOP=1 \
   -f /docker-entrypoint-initdb.d/06-orders-tracking-links.sql
+docker compose exec -T quotation-db psql -U reecicla_user -d reecicla_quotation_db \
+  -v ON_ERROR_STOP=1 \
+  < reecicla-backend/services/quotation/db/10-anonymous-quotes.sql
 ```
 
-Los comandos se ejecutan desde la carpeta `Reecicla`, donde está `docker-compose.yml`. Antes del primer inicio, copia `.env.example` a `.env` y define ambos valores como secretos aleatorios, distintos entre sí. No compartas el archivo `.env`.
+Los comandos se ejecutan desde la carpeta `Reecicla`, donde está `docker-compose.yml`. Las bases existentes requieren ejecutar cada migración una vez; los scripts de inicialización de Compose solo se ejecutan al crear una base vacía. Antes del primer inicio, copia `.env.example` a `.env` y define ambos valores como secretos aleatorios, distintos entre sí. No compartas el archivo `.env`.
 
 ```bash
 cp .env.example .env

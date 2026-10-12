@@ -4,6 +4,21 @@ import { DeviceTypeModel } from '../models/deviceTypeModel';
 import { resolveTenantId } from '../utils/tenant';
 
 export class CatalogController {
+  static async bootstrapTenant(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const tenantId = req.body.tenant_id;
+    if (!tenantId) {
+      res.status(400).json({ error: 'tenant_id es requerido.' });
+      return;
+    }
+    try {
+      await DeviceTypeModel.bootstrapDefaults(tenantId);
+      res.json({ message: 'Catálogo inicializado.' });
+    } catch (error) {
+      console.error('[CatalogController.bootstrapTenant] Error:', error);
+      res.status(500).json({ error: 'No se pudo inicializar el catálogo del negocio.' });
+    }
+  }
+
   static async listDeviceTypes(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const user = req.user;

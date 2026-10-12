@@ -25,6 +25,15 @@ export const authenticateToken = (
 
   try {
     req.authUser = jwt.verify(token, jwtSecret()) as AuthPayload;
+    if (req.authUser.role === 'SUPER_ADMIN') {
+      res.status(403).json({ error: 'La sesión de plataforma no puede acceder a funciones de un negocio.' });
+      return;
+    }
+    const tenantId = req.header('x-tenant-id');
+    if (tenantId && tenantId !== req.authUser.tenantId) {
+      res.status(403).json({ error: 'Tu sesión no pertenece al negocio solicitado.' });
+      return;
+    }
     next();
   } catch {
     res.status(403).json({ error: 'Token inválido o expirado.' });
