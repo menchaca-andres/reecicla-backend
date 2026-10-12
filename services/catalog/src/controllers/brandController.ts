@@ -1,11 +1,12 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { DeviceBrandModel } from '../models/deviceBrandModel';
+import { resolveTenantId } from '../utils/tenant';
 
 export class BrandController {
   static async listBrands(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
-      const tenantId = (req.query.tenant_id as string) || req.user?.tenantId;
+      const tenantId = resolveTenantId(req);
       const deviceTypeId = req.query.device_type_id as string;
       const includeInactive = req.query.include_inactive === 'true';
 
@@ -24,7 +25,7 @@ export class BrandController {
 
   static async createBrand(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
-      const tenantId = req.user?.tenantId || req.body.tenant_id;
+      const tenantId = resolveTenantId(req);
       const { device_type_id, name } = req.body;
 
       if (!tenantId || !device_type_id || !name) {
@@ -50,7 +51,7 @@ export class BrandController {
   static async updateBrand(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const { id } = req.params;
-      const tenantId = req.user?.tenantId || req.body.tenant_id;
+      const tenantId = resolveTenantId(req);
       const { name } = req.body;
 
       if (!tenantId || !name) {
@@ -77,7 +78,7 @@ export class BrandController {
   static async setBrandStatus(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const { id } = req.params;
-      const tenantId = req.user?.tenantId || req.body.tenant_id || (req.query.tenant_id as string);
+      const tenantId = resolveTenantId(req);
       const { status } = req.body;
 
       if (!tenantId || !status || !['ACTIVE', 'INACTIVE'].includes(status)) {

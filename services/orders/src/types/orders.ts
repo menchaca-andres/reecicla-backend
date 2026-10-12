@@ -8,7 +8,7 @@ export interface AuthPayload {
 
 export interface QuoteAcceptedPayload {
   quote_id: string;
-  user_id: string;
+  user_id: string | null;
   device_type_id: string;
   device_type_name: string;
   brand: string | null;
@@ -19,7 +19,34 @@ export interface QuoteAcceptedPayload {
   currency: string;
   customer_name: string;
   customer_email: string;
+  customer_phone: string | null;
+  pickup_address: string | null;
   accepted_at: string;
+}
+
+export interface GuestOrderTracking {
+  order_number: string;
+  quote_id: string;
+  device_type_name: string;
+  brand: string | null;
+  model: string | null;
+  device_year: number | null;
+  declared_condition: string;
+  quoted_price: number | string;
+  currency: string;
+  status: string;
+  customer_name: string;
+  customer_phone: string | null;
+  accepted_at: string;
+  tracking_code: string | null;
+  box_status: string | null;
+  shipped_at: string | null;
+  status_history: Array<{
+    previous_status: string | null;
+    new_status: string;
+    reason: string | null;
+    created_at: string;
+  }>;
 }
 
 export interface DomainEvent<T> {

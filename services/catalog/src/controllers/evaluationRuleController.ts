@@ -1,12 +1,18 @@
 import { Request, Response } from 'express';
 import { EvaluationRuleModel } from '../models/evaluationRuleModel';
+import { AuthenticatedRequest } from '../middlewares/authMiddleware';
+import { resolveTenantId } from '../utils/tenant';
 
 export class EvaluationRuleController {
   static async getActiveRule(req: Request, res: Response): Promise<void> {
     try {
-      const tenantId = (req.headers['x-tenant-id'] as string) || (req as any).user?.tenantId || '00000000-0000-0000-0000-000000000001';
+      const tenantId = resolveTenantId(req as AuthenticatedRequest);
       const deviceTypeId = req.query.device_type_id as string;
 
+      if (!tenantId) {
+        res.status(400).json({ error: 'No se pudo determinar el contexto del negocio.' });
+        return;
+      }
       if (!deviceTypeId) {
         res.status(400).json({ error: 'device_type_id es requerido.' });
         return;
@@ -22,9 +28,13 @@ export class EvaluationRuleController {
 
   static async getRuleHistory(req: Request, res: Response): Promise<void> {
     try {
-      const tenantId = (req.headers['x-tenant-id'] as string) || (req as any).user?.tenantId || '00000000-0000-0000-0000-000000000001';
+      const tenantId = resolveTenantId(req as AuthenticatedRequest);
       const deviceTypeId = req.query.device_type_id as string;
 
+      if (!tenantId) {
+        res.status(400).json({ error: 'No se pudo determinar el contexto del negocio.' });
+        return;
+      }
       if (!deviceTypeId) {
         res.status(400).json({ error: 'device_type_id es requerido.' });
         return;
@@ -40,8 +50,12 @@ export class EvaluationRuleController {
 
   static async getRuleById(req: Request, res: Response): Promise<void> {
     try {
-      const tenantId = (req.headers['x-tenant-id'] as string) || (req as any).user?.tenantId || '00000000-0000-0000-0000-000000000001';
+      const tenantId = resolveTenantId(req as AuthenticatedRequest);
       const { id } = req.params;
+      if (!tenantId) {
+        res.status(400).json({ error: 'No se pudo determinar el contexto del negocio.' });
+        return;
+      }
 
       const rule = await EvaluationRuleModel.getRuleById(tenantId, id);
       if (!rule) {
@@ -58,8 +72,12 @@ export class EvaluationRuleController {
 
   static async createRuleVersion(req: Request, res: Response): Promise<void> {
     try {
-      const tenantId = (req as any).user?.tenantId || (req.headers['x-tenant-id'] as string) || '00000000-0000-0000-0000-000000000001';
+      const tenantId = resolveTenantId(req as AuthenticatedRequest);
       const { device_type_id, checklist, resale_criteria, recycle_criteria } = req.body;
+      if (!tenantId) {
+        res.status(400).json({ error: 'No se pudo determinar el contexto del negocio.' });
+        return;
+      }
 
       if (!device_type_id || !checklist || !Array.isArray(checklist)) {
         res.status(400).json({ error: 'device_type_id y un checklist (array) válidos son requeridos.' });
