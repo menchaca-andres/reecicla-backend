@@ -1,5 +1,7 @@
 # Correcciones de arranque con Docker Compose
 
+> **Nota (2026-10-12, más tarde):** este documento describe los dos primeros errores de arranque. Sus correcciones ya están incluidas en `docker-compose.unificado.yml`, que es el archivo a usar. El estado actual completo está en `HU-015-cambios-implementados.md`.
+
 **Fecha:** 2026-10-12
 **Rama (repo raíz):** `feat/HU11`
 **Alcance:** solo correcciones para que el proyecto levante sin errores. No se agregó ninguna funcionalidad nueva ni se modificó código de los servicios o del frontend.

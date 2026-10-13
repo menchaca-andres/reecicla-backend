@@ -1,0 +1,275 @@
+services:
+  # Base de Datos para Auth Service
+  auth-db:
+    image: postgres:16-alpine
+    container_name: reecicla-auth-db
+    environment:
+      POSTGRES_DB: reecicla_auth_db
+      POSTGRES_USER: reecicla_user
+      POSTGRES_PASSWORD: reecicla_password
+    ports:
+      - "127.0.0.1:5431:5432"
+    volumes:
+      - ./reecicla-backend/services/auth/db/01-auth-migration.sql:/docker-entrypoint-initdb.d/01-auth-migration.sql
+      - ./reecicla-backend/services/auth/db/02-tenant-quote-plans.sql:/docker-entrypoint-initdb.d/02-tenant-quote-plans.sql
+      - ./reecicla-backend/services/auth/db/03-quote-reservation-cascade.sql:/docker-entrypoint-initdb.d/03-quote-reservation-cascade.sql
+      - ./reecicla-backend/services/auth/db/04-guest-email-verification.sql:/docker-entrypoint-initdb.d/04-guest-email-verification.sql
+      - ./reecicla-backend/services/auth/db/05-guest-verification-address.sql:/docker-entrypoint-initdb.d/05-guest-verification-address.sql
+      - ./reecicla-backend/services/auth/db/06-tenant-slugs.sql:/docker-entrypoint-initdb.d/06-tenant-slugs.sql
+      - ./reecicla-backend/services/auth/db/07-platform-admins.sql:/docker-entrypoint-initdb.d/07-platform-admins.sql
+      - auth_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reecicla_user -d reecicla_auth_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # Base de Datos para Quotation Service
+  quotation-db:
+    image: postgres:16-alpine
+    container_name: reecicla-quotation-db
+    environment:
+      POSTGRES_DB: reecicla_quotation_db
+      POSTGRES_USER: reecicla_user
+      POSTGRES_PASSWORD: reecicla_password
+    ports:
+      - "127.0.0.1:5435:5432"
+    volumes:
+      - ./reecicla-backend/services/quotation/db/02-quotation-migration.sql:/docker-entrypoint-initdb.d/02-quotation-migration.sql
+      - ./reecicla-backend/services/quotation/db/03-quotation-device-type-code.sql:/docker-entrypoint-initdb.d/03-quotation-device-type-code.sql
+      - ./reecicla-backend/services/quotation/db/04-quote-event-outbox.sql:/docker-entrypoint-initdb.d/04-quote-event-outbox.sql
+      - ./reecicla-backend/services/quotation/db/05-quotation-idempotency.sql:/docker-entrypoint-initdb.d/05-quotation-idempotency.sql
+      - ./reecicla-backend/services/quotation/db/06-quotation-processed-event-tenant.sql:/docker-entrypoint-initdb.d/06-quotation-processed-event-tenant.sql
+      - ./reecicla-backend/services/quotation/db/07-quotation-pricing-rules-granularity.sql:/docker-entrypoint-initdb.d/07-quotation-pricing-rules-granularity.sql
+      - ./reecicla-backend/services/quotation/db/08-fix-pricing-rules-unique-index.sql:/docker-entrypoint-initdb.d/08-fix-pricing-rules-unique-index.sql
+      - ./reecicla-backend/services/quotation/db/09-quote-expiry-index.sql:/docker-entrypoint-initdb.d/09-quote-expiry-index.sql
+      - ./reecicla-backend/services/quotation/db/10-anonymous-quotes.sql:/docker-entrypoint-initdb.d/10-anonymous-quotes.sql
+      - quotation_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reecicla_user -d reecicla_quotation_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # Base de Datos para Orders Service
+  orders-db:
+    image: postgres:16-alpine
+    container_name: reecicla-orders-db
+    environment:
+      POSTGRES_DB: reecicla_orders_db
+      POSTGRES_USER: reecicla_user
+      POSTGRES_PASSWORD: reecicla_password
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - ./reecicla-backend/database/03-orders-migration.sql:/docker-entrypoint-initdb.d/03-orders-migration.sql
+      - ./reecicla-backend/database/04-orders-processed-events.sql:/docker-entrypoint-initdb.d/04-orders-processed-events.sql
+      - ./reecicla-backend/database/05-orders-anonymous-acceptance.sql:/docker-entrypoint-initdb.d/05-orders-anonymous-acceptance.sql
+      - ./reecicla-backend/database/05-orders-domain-event-outbox.sql:/docker-entrypoint-initdb.d/05-orders-domain-event-outbox.sql
+      - ./reecicla-backend/database/06-orders-tracking-links.sql:/docker-entrypoint-initdb.d/06-orders-tracking-links.sql
+      - orders_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reecicla_user -d reecicla_orders_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # Base de Datos para Catalog Service
+  catalog-db:
+    image: postgres:16-alpine
+    container_name: reecicla-catalog-db
+    environment:
+      POSTGRES_DB: reecicla_catalog_db
+      POSTGRES_USER: reecicla_user
+      POSTGRES_PASSWORD: reecicla_password
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - ./reecicla-backend/services/catalog/db/04-catalog-migration.sql:/docker-entrypoint-initdb.d/04-catalog-migration.sql
+      - ./reecicla-backend/services/catalog/db/05-devices-migration.sql:/docker-entrypoint-initdb.d/05-devices-migration.sql
+      - ./reecicla-backend/services/catalog/db/05-processed-events-tenant.sql:/docker-entrypoint-initdb.d/05-processed-events-tenant.sql
+      - ./reecicla-backend/services/catalog/db/06-evaluation-rules-seed.sql:/docker-entrypoint-initdb.d/06-evaluation-rules-seed.sql
+      - catalog_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reecicla_user -d reecicla_catalog_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # Base de Datos para Inspection Service (HU-015)
+  inspection-db:
+    image: postgres:16-alpine
+    container_name: reecicla-inspection-db
+    environment:
+      POSTGRES_DB: reecicla_inspection_db
+      POSTGRES_USER: reecicla_user
+      POSTGRES_PASSWORD: reecicla_password
+    ports:
+      - "127.0.0.1:5436:5432"
+    volumes:
+      - ./reecicla-backend/services/inspection/db/01-inspection-migration.sql:/docker-entrypoint-initdb.d/01-inspection-migration.sql
+      - inspection_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reecicla_user -d reecicla_inspection_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # Microservicios Backend
+  auth-service:
+    build:
+      context: ./reecicla-backend/services/auth
+      dockerfile: Dockerfile
+    container_name: reecicla-auth-service
+    env_file:
+      - ./reecicla-backend/services/auth/.env
+    environment:
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-}
+      JWT_SECRET: ${JWT_SECRET:-}
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-Reecicla <no-reply@reecicla.local>}
+      TRACKING_LINK_ALLOWED_ORIGINS: ${TRACKING_LINK_ALLOWED_ORIGINS:-http://localhost:5173}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+    depends_on:
+      auth-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+
+  quotation-service:
+    build:
+      context: ./reecicla-backend/services/quotation
+      dockerfile: Dockerfile
+    container_name: reecicla-quotation-service
+    env_file:
+      - ./reecicla-backend/services/quotation/.env
+    environment:
+      AUTH_SERVICE_URL: http://auth-service:3001
+      CATALOG_SERVICE_URL: http://catalog-service:3003
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-}
+      JWT_SECRET: ${JWT_SECRET:-}
+    depends_on:
+      quotation-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  gateway:
+    build:
+      context: ./reecicla-backend/services/gateway
+      dockerfile: Dockerfile
+    container_name: reecicla-gateway
+    env_file:
+      - ./reecicla-backend/services/gateway/.env
+    environment:
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - auth-service
+      - quotation-service
+      - catalog-service
+      - orders-service
+      - inspection-service
+
+  catalog-service:
+    build:
+      context: ./reecicla-backend/services/catalog
+      dockerfile: Dockerfile
+    container_name: reecicla-catalog-service
+    env_file:
+      - ./reecicla-backend/services/catalog/.env
+    environment:
+      JWT_SECRET: ${JWT_SECRET:-}
+    depends_on:
+      catalog-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  orders-service:
+    build:
+      context: ./reecicla-backend/services/orders
+      dockerfile: Dockerfile
+    container_name: reecicla-orders-service
+    environment:
+      PORT: 3004
+      DATABASE_URL: postgres://reecicla_user:reecicla_password@orders-db:5432/reecicla_orders_db
+      RABBITMQ_URL: amqp://reecicla:reecicla_password@rabbitmq:5672
+      JWT_SECRET: ${JWT_SECRET:-}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-}
+      AUTH_SERVICE_URL: http://auth-service:3001
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+    depends_on:
+      orders-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  # HU-015: inspección con checklist
+  inspection-service:
+    build:
+      context: ./reecicla-backend/services/inspection
+      dockerfile: Dockerfile
+    container_name: reecicla-inspection-service
+    environment:
+      PORT: 3005
+      DATABASE_URL: postgres://reecicla_user:reecicla_password@inspection-db:5432/reecicla_inspection_db
+      RABBITMQ_URL: amqp://reecicla:reecicla_password@rabbitmq:5672
+      CATALOG_SERVICE_URL: http://catalog-service:3003
+      JWT_SECRET: ${JWT_SECRET:-}
+    depends_on:
+      inspection-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  # Message Broker (TE-02)
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: reecicla-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: reecicla
+      RABBITMQ_DEFAULT_PASS: reecicla_password
+    ports:
+      - "127.0.0.1:5672:5672" # AMQP
+      - "127.0.0.1:15672:15672" # Management UI (http://localhost:15672)
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 20s
+
+  mailpit:
+    image: axllent/mailpit:v1.27
+    container_name: reecicla-mailpit
+    ports:
+      - "127.0.0.1:8025:8025"
+
+  # Application Frontend (React + Vite + Nginx)
+  frontend:
+    build:
+      context: ./reecicla-frontend
+      dockerfile: Dockerfile
+    container_name: reecicla-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - gateway
+
+volumes:
+  auth_db_data:
+  quotation_db_data:
+  orders_db_data:
+  catalog_db_data:
+  inspection_db_data:
+  rabbitmq_data:

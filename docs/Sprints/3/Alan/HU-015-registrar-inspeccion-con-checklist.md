@@ -11,6 +11,8 @@
 | Rama         | `feat/HU15` (backend y frontend)       |
 | Estado       | Implementada en `feat/HU15`, sin merge |
 
+> Tras integrar `main` (ADR-001), el `SUPER_ADMIN` pasó a ser una sesión de plataforma y ya no accede a inspección. Los criterios y tareas de abajo reflejan ese cambio. El detalle de lo construido está en `HU-015-cambios-implementados.md`.
+
 Formato tomado de `docs/plantillaDeHUs.csv` (historia → criterios de aceptación → Definition of Done → tareas `T#_HU15` → subtareas `ST#.#`). El contenido funcional sale del kata, de `Reecicla definitivo.pdf` (secciones 4, 5 y 8) y de `docs/script.sql`.
 
 ---
@@ -147,7 +149,7 @@ Toda consulta y escritura se filtra por el `tenant_id` del JWT. Un inspector no 
 
 ### CA-14 — Consulta
 
-`INSPECTOR`, `TENANT_ADMIN` y `SUPER_ADMIN` pueden listar los equipos pendientes de inspección y ver una inspección ya registrada con sus ítems.
+`INSPECTOR` y `TENANT_ADMIN` pueden listar los equipos pendientes de inspección y ver una inspección ya registrada con sus ítems.
 
 ### CA-15 — Confirmación y errores
 
@@ -214,7 +216,7 @@ Definir las tablas antes de escribir código. El `script.sql` es la base, con lo
 - ST3.4 Agregar `inspection-db` a `docker-compose.yml` (puerto host 5436, healthcheck).
 - ST3.5 Agregar `inspection-service` a `docker-compose.yml` (espera a su base y a RabbitMQ).
 - ST3.6 Agregar `INSPECTION_SERVICE_URL` y la ruta `/api/inspections` al Gateway.
-- ST3.7 Verificar que `docker compose up` levanta los 13 contenedores.
+- ST3.7 Verificar que `docker compose up` levanta todos los contenedores (14 con Mailpit).
 
 ### T4_HU15 Implementar mensajería
 
@@ -278,7 +280,7 @@ Request de ejemplo:
 - ST8.1 Crear el middleware de autenticación JWT (mismo `JWT_SECRET` que los demás servicios).
 - ST8.2 Crear `authorizeRoles`.
 - ST8.3 Restringir `POST /api/inspections` a `INSPECTOR`.
-- ST8.4 Permitir las consultas a `INSPECTOR`, `TENANT_ADMIN` y `SUPER_ADMIN`.
+- ST8.4 Permitir las consultas a `INSPECTOR` y `TENANT_ADMIN`.
 - ST8.5 Tomar `tenant_id` y `user_id` siempre del token.
 
 ### T9_HU15 Implementar interfaz
