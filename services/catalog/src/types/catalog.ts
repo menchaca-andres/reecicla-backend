@@ -4,6 +4,7 @@ export interface AuthPayload {
   userId: string;
   tenantId: string;
   role: UserRole;
+  scope?: 'tenant' | 'platform';
 }
 
 export interface DeviceReceivedPayload {
@@ -54,4 +55,3 @@ export interface EvaluationRule {
   device_type_name?: string;
   device_type_code?: string;
 }
-

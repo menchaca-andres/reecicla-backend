@@ -23,6 +23,8 @@ function createEvent() {
       currency: 'BOB',
       customer_name: 'Cliente de prueba',
       customer_email: 'orders-test@example.invalid',
+      customer_phone: '555-0100',
+      pickup_address: 'Dirección de prueba',
       accepted_at: new Date().toISOString(),
     },
   };
@@ -30,6 +32,15 @@ function createEvent() {
 
 test('valida un evento QuoteAccepted completo', () => {
   assert.doesNotThrow(() => validateQuoteAcceptedEvent(createEvent()));
+});
+
+test('valida una aceptación de invitado sin usuario asociado', () => {
+  const event = createEvent();
+  event.payload.user_id = null;
+  assert.doesNotThrow(() => validateQuoteAcceptedEvent(event));
+
+  event.payload.user_id = 'invalid-user-id';
+  assert.throws(() => validateQuoteAcceptedEvent(event), /usuario.*no es válido/);
 });
 
 test('rechaza un evento con un tipo desconocido', () => {
@@ -48,10 +59,22 @@ test('rechaza precio y año fuera de rango', () => {
   assert.throws(() => validateQuoteAcceptedEvent(yearEvent), /payload.*inválidos/);
 });
 
+test('rechaza tokens de seguimiento mal formados sin consultar la base', async () => {
+  const { OrderModel } = require('../dist/models/orderModel');
+  assert.equal(await OrderModel.getByTrackingToken('invalid-token'), null);
+});
+
 test('crea una orden y un solo estado inicial frente a eventos duplicados', { skip: process.env.RUN_ORDERS_INTEGRATION !== '1' }, async () => {
   const { pool } = require('../dist/config/db');
   const { OrderModel } = require('../dist/models/orderModel');
+  const originalFetch = global.fetch;
+  let trackingUrl;
+  global.fetch = async (_url, options) => {
+    trackingUrl = JSON.parse(options.body).tracking_url;
+    return { ok: true, status: 202, json: async () => ({ message: 'sent' }) };
+  };
   const event = createEvent();
+  event.payload.user_id = null;
   const duplicateEvent = { ...event, event_id: randomUUID(), correlation_id: randomUUID() };
 
   try {
@@ -68,6 +91,19 @@ test('crea una orden y un solo estado inicial frente a eventos duplicados', { sk
     assert.equal(orderResult.rows[0].model, event.payload.model);
     assert.equal(orderResult.rows[0].device_year, event.payload.year);
     assert.equal(orderResult.rows[0].declared_condition, event.payload.condition);
+    assert.equal(orderResult.rows[0].user_id, null);
+    assert.equal(orderResult.rows[0].customer_phone, event.payload.customer_phone);
+    assert.equal(orderResult.rows[0].pickup_address.address, event.payload.pickup_address);
+
+    const token = trackingUrl.match(/\/seguimiento\/([0-9a-f]{64})$/)?.[1];
+    assert.ok(token);
+    const trackedOrder = await OrderModel.getByTrackingToken(token);
+    assert.equal(trackedOrder.order_number, orderResult.rows[0].order_number);
+    assert.equal(trackedOrder.status, 'ACCEPTED');
+    assert.equal(trackedOrder.status_history.length, 1);
+    assert.equal('tracking_token_hash' in trackedOrder, false);
+    const invalidToken = `${token.slice(0, -1)}${token.endsWith('0') ? '1' : '0'}`;
+    assert.equal(await OrderModel.getByTrackingToken(invalidToken), null);
 
     const historyResult = await pool.query(
       'SELECT * FROM order_status_history WHERE tenant_id = $1 AND order_id = $2',
@@ -83,6 +119,7 @@ test('crea una orden y un solo estado inicial frente a eventos duplicados', { sk
     );
     await pool.query('DELETE FROM orders WHERE tenant_id = $1 AND quote_id = $2', [event.tenant_id, event.payload.quote_id]);
     await pool.query('DELETE FROM processed_events WHERE event_id = ANY($1::uuid[])', [[event.event_id, duplicateEvent.event_id]]);
+    global.fetch = originalFetch;
     await pool.end();
   }
 });

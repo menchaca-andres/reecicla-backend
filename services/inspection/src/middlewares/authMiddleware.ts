@@ -2,7 +2,11 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { AuthPayload } from '../types/inspection';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'default_jwt_secret_reecicla';
+function jwtSecret(): string {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error('JWT_SECRET debe estar configurado.');
+  return secret;
+}
 
 export interface AuthenticatedRequest extends Request {
   authUser?: AuthPayload;
@@ -20,7 +24,18 @@ export const authenticateToken = (
   }
 
   try {
-    req.authUser = jwt.verify(token, JWT_SECRET) as AuthPayload;
+    const decoded = jwt.verify(token, jwtSecret()) as Partial<AuthPayload>;
+    if (decoded.role === 'SUPER_ADMIN' || !decoded.tenantId || !decoded.userId) {
+      res.status(403).json({ error: 'La sesión de plataforma no puede acceder a funciones de un negocio.' });
+      return;
+    }
+    // ADR-001: el Gateway inyecta x-tenant-id al resolver el slug de la URL.
+    const tenantId = req.header('x-tenant-id');
+    if (tenantId && tenantId !== decoded.tenantId) {
+      res.status(403).json({ error: 'Tu sesión no pertenece al negocio solicitado.' });
+      return;
+    }
+    req.authUser = decoded as AuthPayload;
     next();
   } catch {
     res.status(403).json({ error: 'Token inválido o expirado.' });

@@ -3,7 +3,9 @@
 **Fecha:** 2026-10-12
 **Autor:** Alan Maldonado
 **Ramas:** `feat/HU15` en `reecicla-backend` y `reecicla-frontend` (parten de `main` en `ac48707` y `69367e3`)
-**Estado:** implementado y verificado en local. **Sin commit y sin merge a `main`.**
+**Estado:** implementado y verificado en local. `feat/HU15` ya incluye `main` hasta el ADR-001 (`f1ebfc2` en backend, `8f2e5e7` en frontend). **Falta el merge de `feat/HU15` hacia `main`.**
+
+> **Actualizado tras integrar `main` (ADR-001), 2026-10-12.** Las rutas del negocio van por `/recicla/{slug}/...`, el superadmin pasó a ser una sesión de plataforma que no entra a funciones de un negocio, y el compose necesita Mailpit, variables y migraciones nuevas. Todo eso ya está reflejado abajo; el detalle está en la [sección 11](#11-integración-con-main-adr-001).
 
 La historia, sus criterios de aceptación y sus tareas están en [HU-015-registrar-inspeccion-con-checklist.md](HU-015-registrar-inspeccion-con-checklist.md). Este documento describe lo que quedó construido y lo que necesitas para seguir con HU-016, HU-017 y HU-018.
 
@@ -36,7 +38,7 @@ Todas son idempotentes y no borran datos. La base de inspección es nueva, así 
 docker compose up -d --build
 ```
 
-Deben quedar **13 contenedores** arriba, con las 5 bases y RabbitMQ en `healthy`.
+Deben quedar **14 contenedores** arriba (los 13 de antes más Mailpit), con las 5 bases y RabbitMQ en `healthy`.
 
 ---
 
@@ -66,7 +68,7 @@ Los errores de arranque detectados antes (tabla `domain_event_outbox` y espera a
 | Contenedor | `reecicla-inspection-service` |
 | Puerto | 3005 |
 | Base de datos | `reecicla_inspection_db` en `reecicla-inspection-db`, puerto host **5436** |
-| Ruta en el Gateway | `/api/inspections` |
+| Ruta en el Gateway | `/recicla/{slug}/inspections` (también `/recicla/{slug}/api/inspections` y `/api/inspections`) |
 | Variables | `PORT`, `DATABASE_URL`, `RABBITMQ_URL`, `CATALOG_SERVICE_URL`, `JWT_SECRET` |
 
 No usa `.env` en Docker: sus variables están en el compose. Para correrlo fuera de Docker, copia `.env.example` a `.env`.
@@ -97,7 +99,7 @@ services/inspection/
 
 ### Otros cambios en el backend
 
-- `services/gateway/src/index.ts`: ruta `/api/inspections` y variable `INSPECTION_SERVICE_URL`.
+- `services/gateway/src/index.ts`: rutas de inspección (con y sin slug) y variable `INSPECTION_SERVICE_URL`.
 - `services/gateway/.env.example`: `INSPECTION_SERVICE_URL`.
 - `services/auth/src/controllers/authController.ts`: corrección del rol (sección 2).
 - `docs/script.sql` y `database/script.sql`: sección INSPECTION DB actualizada.
@@ -111,7 +113,7 @@ No se tocó `orders`, `catalog` ni `quotation`.
 - `src/types/index.ts`: tipos `PendingInspection`, `InspectionChecklist`, `RegisterInspectionInput`, `InspectionItem`, `Inspection`.
 - `src/components/Navbar.tsx` y `src/App.tsx`: pestaña "Inspección".
 
-La pestaña la ven `INSPECTOR`, `TENANT_ADMIN` y `SUPER_ADMIN`. Solo `INSPECTOR` ve el botón "Inspeccionar"; los demás consultan.
+La pestaña la ven `INSPECTOR` y `TENANT_ADMIN`. Solo `INSPECTOR` ve el botón "Inspeccionar"; el administrador consulta. La pestaña está en `src/components/Navbar/Navbar.tsx`, que es el Navbar que usa `main`.
 
 ---
 
@@ -138,7 +140,7 @@ Orders ──DeviceReceived──► Inspection ──GET evaluation-rules/activ
 |----------|--------|
 | Inspection no consulta a Orders; se alimenta de `DeviceReceived` | El documento oficial define ese evento como la entrada de Inspection, y evita acoplar los servicios |
 | La checklist se pide a Catalog por REST | El inspector espera respuesta inmediata (sección 5.1 del documento oficial) |
-| `tenant_id` y `user_id` salen del JWT | El ADR-001 (slug y `X-Tenant-ID`) no está mergeado en `main` |
+| `tenant_id` y `user_id` salen del JWT | Igual que Orders. Si el Gateway inyecta `X-Tenant-ID` (ADR-001) y no coincide con el del token, se responde 403 |
 | `inspections.result` es opcional | El resultado reventa/reciclaje pertenece a HU-016 |
 | Se guarda `value` por ítem además de PASS/FAIL | La checklist de HU-008 tiene ítems `number`, `text` y `select`; PASS/FAIL solo aplica a `boolean` |
 | La evidencia son referencias (URL o código), no archivos | El backlog pide "referencias de evidencia" y no hay almacenamiento de archivos |
@@ -157,14 +159,14 @@ UPDATE domain_event_outbox SET published_at = NULL WHERE event_type = 'DeviceRec
 
 ## 5. Contrato de la API
 
-Todas las rutas van por el Gateway (`http://localhost:3000`) y requieren `Authorization: Bearer <token>`.
+Todas las rutas van por el Gateway (`http://localhost:3000`) y requieren `Authorization: Bearer <token>` de un usuario del negocio. El frontend usa el prefijo `/recicla/{slug}/api/inspections`; las rutas de la tabla también responden con ese prefijo y con `/recicla/{slug}/inspections`. Una sesión de plataforma (`SUPER_ADMIN`) recibe 403.
 
 | Método | Ruta | Roles | Descripción |
 |--------|------|-------|-------------|
-| GET | `/api/inspections/pending` | INSPECTOR, TENANT_ADMIN, SUPER_ADMIN | Equipos recibidos sin inspección |
+| GET | `/api/inspections/pending` | INSPECTOR, TENANT_ADMIN | Equipos recibidos sin inspección |
 | GET | `/api/inspections/orders/:orderId/checklist` | los mismos | Checklist vigente del tipo de la orden |
 | POST | `/api/inspections` | **solo INSPECTOR** | Registra la inspección |
-| GET | `/api/inspections/orders/:orderId` | INSPECTOR, TENANT_ADMIN, SUPER_ADMIN | Inspección de una orden, con ítems |
+| GET | `/api/inspections/orders/:orderId` | INSPECTOR, TENANT_ADMIN | Inspección de una orden, con ítems |
 | GET | `/api/inspections` | los mismos | Inspecciones del tenant, sin ítems |
 
 ### `GET /api/inspections/orders/:orderId/checklist` → 200
@@ -215,7 +217,7 @@ Respuesta 201: `{ "message": "Inspección registrada correctamente.", "inspectio
 |--------|--------|
 | 400 | Datos inválidos. Incluye `details` con un mensaje por cada problema. También si `order_id` no es un UUID |
 | 401 | Sin token |
-| 403 | Token inválido, o rol sin permiso |
+| 403 | Token inválido, rol sin permiso, sesión de plataforma, o el token no pertenece al negocio de la URL |
 | 404 | No hay un equipo recibido para esa orden en el tenant, o la orden no tiene inspección |
 | 409 | La orden ya tiene inspección; la checklist cambió de versión; o el tipo no tiene checklist vigente |
 | 502 | No se pudo consultar a Catalog |
@@ -331,11 +333,11 @@ Desde `reecicla-backend/services/inspection`:
 |------|---------|-----------|
 | Unitarias | `npm test` | 16 de 16 |
 | Integración (necesita `inspection-db` arriba) | `$env:RUN_INSPECTION_INTEGRATION='1'; npm test` | 21 de 21 (16 + 5) |
-| Punta a punta (necesita todo arriba) | `node tests/e2e/hu015-flow.mjs` | 25 verificaciones correctas |
+| Punta a punta (necesita todo arriba) | `node tests/e2e/hu015-flow.mjs` | 27 verificaciones correctas |
 
 - **Unitarias:** validación de la checklist por tipo de ítem, obligatorios, claves desconocidas y repetidas, condición real, límites de evidencia y validación de `DeviceReceived`.
 - **Integración:** evento repetido no duplica; el registro guarda ítems y outbox; segunda inspección rechazada; un fallo no deja datos a medias; aislamiento entre tenants. Limpian lo que crean.
-- **Punta a punta:** recorre cotización → orden → envío → recepción → inspección por el Gateway, y comprueba 401, 403, 404, 409 y 400. **Crea datos reales** en las bases locales: un inspector, un cliente, una cotización, una orden y una inspección por corrida.
+- **Punta a punta:** recorre cotización → orden → envío → recepción → inspección por el Gateway, y comprueba 401, 403, 404, 409 y 400. **Crea datos reales** en las bases locales: un inspector, un administrador del negocio, un cliente, una cotización, una orden y una inspección por corrida.
 
 ### Lo que no se probó
 
@@ -345,11 +347,10 @@ Desde `reecicla-backend/services/inspection`:
 
 ### Probarlo a mano
 
-1. Entra en `http://localhost:5173` como `superadmin@reecicla.com`.
-2. En "Administradores", crea un usuario con rol `INSPECTOR`.
-3. Con un cliente: cotiza y acepta. El tipo necesita una regla de precio (pestaña de reglas).
-4. Como administrador, en "Logística": registra la guía con estado "En Tránsito" y luego "Registrar Recepción".
-5. Entra como el inspector, abre "Inspección" y registra la checklist.
+1. Entra en `http://localhost:5173/admin` como `superadmin@reecicla.com` y crea, para el negocio `demo`, un usuario `INSPECTOR` y un `TENANT_ADMIN`.
+2. En `http://localhost:5173/recicla/demo`, cotiza y acepta. El tipo necesita una regla de precio (pestaña "Reglas", como administrador del negocio). Si aceptas sin iniciar sesión, el código de verificación llega a Mailpit: `http://localhost:8025`.
+3. Como administrador del negocio, en "Logística": registra la guía con estado "En Tránsito" y luego "Registrar Recepción".
+4. Entra como el inspector, abre "Inspección" y registra la checklist.
 
 ---
 
@@ -380,9 +381,104 @@ Depende de HU-017. No hay nada de HU-015 que debas tocar.
 
 ## 10. Pendientes y cosas a saber
 
-- **Sin commit.** Los cambios están en el árbol de trabajo de `feat/HU15` en ambos repos.
 - **`docker-compose.yml` fuera de los repos.** Convendría moverlo a `reecicla-backend` o a un repo propio para que deje de pasarse a mano.
-- **El ADR-001 no está en `main`.** Cuando se mergee, Inspection tendrá que leer el tenant como lo defina ese cambio.
+- **El inspector no ve la pestaña "Logística"** en el Navbar nuevo de `main`, aunque el backend sí le permite registrar envíos y recepciones.
 - **El inspector también puede registrar envíos y recepciones**, porque `orderRoutes.ts` incluye `INSPECTOR` en los roles de logística. No se cambió.
 - **Las lecturas de reglas de evaluación en Catalog son públicas** y toman el tenant del header `x-tenant-id`. Inspection depende de eso; si Catalog las protege, hay que ajustar `catalogClient.ts`.
 - **La URL del Gateway sigue fija** en `reecicla-frontend/src/services/api.ts`.
+
+---
+
+## 11. Integración con `main` (ADR-001)
+
+El 2026-10-12 se trajo `main` a `feat/HU15` en ambos repos. `main` incluía el ADR-001 completo: negocio resuelto por slug, cotización anónima con verificación por correo, enlace de seguimiento y administración de plataforma.
+
+### Conflictos resueltos
+
+| Repo | Archivo | Resolución |
+|------|---------|------------|
+| backend | `services/auth/src/controllers/authController.ts` | Se tomó la versión de `main`, que ya incluía la corrección del rol |
+| backend | `services/gateway/src/index.ts` | Estructura de `main` más las rutas de inspección, con y sin slug |
+| backend | `services/gateway/.env.example` | Ambas variables |
+| frontend | `src/App.tsx` | Estructura de `main` más la pestaña de inspección |
+| frontend | `src/services/api.ts` | Las llamadas de inspección usan la ruta con slug (`scoped('inspections', ...)`) |
+| frontend | `src/types/index.ts` | Ambos bloques de tipos |
+
+### Ajustes a Inspection para seguir las reglas de `main`
+
+- `JWT_SECRET` es obligatorio: el servicio no arranca sin él, igual que Orders y Auth.
+- Una sesión de plataforma (`SUPER_ADMIN`) recibe 403: no puede entrar a funciones de un negocio.
+- Si llega `X-Tenant-ID` del Gateway y no coincide con el tenant del token, se responde 403.
+- `SUPER_ADMIN` salió de los roles que consultan inspecciones.
+- La prueba de punta a punta usa las rutas con slug, el login de plataforma y un `TENANT_ADMIN` para logística.
+
+### Lo que `main` exige ahora en `docker-compose.yml`
+
+Además de lo de la sección 7:
+
+```yaml
+  # auth-db → volumes
+      - ./reecicla-backend/services/auth/db/04-guest-email-verification.sql:/docker-entrypoint-initdb.d/04-guest-email-verification.sql
+      - ./reecicla-backend/services/auth/db/05-guest-verification-address.sql:/docker-entrypoint-initdb.d/05-guest-verification-address.sql
+      - ./reecicla-backend/services/auth/db/06-tenant-slugs.sql:/docker-entrypoint-initdb.d/06-tenant-slugs.sql
+      - ./reecicla-backend/services/auth/db/07-platform-admins.sql:/docker-entrypoint-initdb.d/07-platform-admins.sql
+  # quotation-db → volumes
+      - ./reecicla-backend/services/quotation/db/09-quote-expiry-index.sql:/docker-entrypoint-initdb.d/09-quote-expiry-index.sql
+      - ./reecicla-backend/services/quotation/db/10-anonymous-quotes.sql:/docker-entrypoint-initdb.d/10-anonymous-quotes.sql
+  # orders-db → volumes
+      - ./reecicla-backend/database/05-orders-anonymous-acceptance.sql:/docker-entrypoint-initdb.d/05-orders-anonymous-acceptance.sql
+      - ./reecicla-backend/database/06-orders-tracking-links.sql:/docker-entrypoint-initdb.d/06-orders-tracking-links.sql
+
+  # auth-service → environment (y depends_on: mailpit)
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-Reecicla <no-reply@reecicla.local>}
+
+  # gateway → environment
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-reecicla-internal-dev-token}
+
+  # orders-service → environment
+      AUTH_SERVICE_URL: http://auth-service:3001
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-reecicla-internal-dev-token}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+
+  # servicio nuevo
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: reecicla-mailpit
+    ports:
+      - "8025:8025" # Bandeja web
+      - "1025:1025" # SMTP
+```
+
+El README de `main` describe un compose propio de Andrés (carpeta `Reecicla`, con `.env` raíz y puertos enlazados a `127.0.0.1`). Si el equipo adopta ese archivo, solo hay que agregarle `inspection-db`, `inspection-service` y las migraciones de la sección 7.
+
+### Migraciones de `main` para bases ya creadas
+
+Además de las de la sección 1.2, en este orden:
+
+```powershell
+$b = "reecicla-backend"
+Get-Content -Raw $b/services/auth/db/04-guest-email-verification.sql   | docker exec -i reecicla-auth-db      psql -v ON_ERROR_STOP=1 -U reecicla_user -d reecicla_auth_db
+Get-Content -Raw $b/services/auth/db/05-guest-verification-address.sql | docker exec -i reecicla-auth-db      psql -v ON_ERROR_STOP=1 -U reecicla_user -d reecicla_auth_db
+Get-Content -Raw $b/services/auth/db/06-tenant-slugs.sql               | docker exec -i reecicla-auth-db      psql -v ON_ERROR_STOP=1 -U reecicla_user -d reecicla_auth_db
+Get-Content -Raw $b/services/auth/db/07-platform-admins.sql            | docker exec -i reecicla-auth-db      psql -v ON_ERROR_STOP=1 -U reecicla_user -d reecicla_auth_db
+Get-Content -Raw $b/services/quotation/db/09-quote-expiry-index.sql    | docker exec -i reecicla-quotation-db psql -v ON_ERROR_STOP=1 -U reecicla_user -d reecicla_quotation_db
+Get-Content -Raw $b/services/quotation/db/10-anonymous-quotes.sql      | docker exec -i reecicla-quotation-db psql -v ON_ERROR_STOP=1 -U reecicla_user -d reecicla_quotation_db
+Get-Content -Raw $b/database/05-orders-anonymous-acceptance.sql        | docker exec -i reecicla-orders-db    psql -v ON_ERROR_STOP=1 -U reecicla_user -d reecicla_orders_db
+Get-Content -Raw $b/database/06-orders-tracking-links.sql              | docker exec -i reecicla-orders-db    psql -v ON_ERROR_STOP=1 -U reecicla_user -d reecicla_orders_db
+```
+
+La 07 de Auth mueve al superadmin de `users` a `platform_admins`. Desde entonces el superadmin entra por `/admin`, no por la pantalla de un negocio.
+
+### Verificado después de integrar
+
+- Los 14 contenedores levantan y los 6 servicios más el frontend construyen en Docker.
+- 21 de 21 pruebas del servicio de inspección.
+- 27 verificaciones de punta a punta por el Gateway, con las rutas por slug.
+
+`tsc` local de `catalog` puede fallar con errores sobre `req.user` si la máquina tiene un `node_modules` con `@types/passport` en una carpeta superior. No es un error del repo: el build de Docker pasa.

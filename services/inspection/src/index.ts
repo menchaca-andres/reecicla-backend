@@ -7,6 +7,7 @@ import { closeDeviceReceivedConsumer, startDeviceReceivedConsumer } from './mess
 import { closeEventPublisher, dispatchPendingInspectionEvents } from './messaging/eventPublisher';
 
 dotenv.config();
+if (!process.env.JWT_SECRET) throw new Error('JWT_SECRET debe estar configurado.');
 
 const app = express();
 const PORT = process.env.PORT || 3005;
