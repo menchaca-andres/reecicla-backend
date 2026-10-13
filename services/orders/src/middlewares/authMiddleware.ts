@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import { timingSafeEqual } from 'crypto';
 import { AuthPayload } from '../types/orders';
 
 function jwtSecret(): string {
@@ -38,6 +39,29 @@ export const authenticateToken = (
   } catch {
     res.status(403).json({ error: 'Token inválido o expirado.' });
   }
+};
+
+export const authenticateInternalService = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void => {
+  const expected = process.env.INTERNAL_SERVICE_TOKEN;
+  const provided = req.header('x-internal-service-token');
+  if (!expected || !provided) {
+    res.status(403).json({ error: 'Autenticación de servicio requerida.' });
+    return;
+  }
+  const expectedBuffer = Buffer.from(expected);
+  const providedBuffer = Buffer.from(provided);
+  if (
+    expectedBuffer.length !== providedBuffer.length ||
+    !timingSafeEqual(expectedBuffer, providedBuffer)
+  ) {
+    res.status(403).json({ error: 'Autenticación de servicio inválida.' });
+    return;
+  }
+  next();
 };
 
 export const authorizeRoles = (...allowedRoles: string[]) => {

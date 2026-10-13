@@ -1,5 +1,11 @@
 import { pool } from '../config/db';
-import { DomainEvent, InspectionCompletedPayload, QuoteAcceptedPayload } from '../types/orders';
+import {
+  AdjustmentResolution,
+  AdjustedQuoteEventPayload,
+  DomainEvent,
+  InspectionCompletedPayload,
+  QuoteAcceptedPayload,
+} from '../types/orders';
 import { validateQuoteAcceptedEvent } from '../domain/quoteAccepted';
 import { validateInspectionCompletedEvent } from '../domain/inspectionCompleted';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'crypto';
@@ -196,12 +202,264 @@ export class OrderModel {
     }
   }
 
+  static async processAdjustedQuoteEvent(
+    event: DomainEvent<AdjustedQuoteEventPayload>
+  ): Promise<void> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const processed = await client.query(
+        `INSERT INTO processed_events (event_id, event_type, tenant_id, correlation_id)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (event_id) DO NOTHING
+         RETURNING event_id`,
+        [event.event_id, event.event_type, event.tenant_id, event.correlation_id]
+      );
+      if (processed.rowCount === 0) {
+        await client.query('COMMIT');
+        return;
+      }
+
+      const target = event.event_type === 'AdjustedQuoteCreated'
+        ? 'ADJUSTMENT_PENDING'
+        : event.event_type === 'AdjustedQuoteAccepted'
+          ? 'PAYMENT_PENDING'
+          : 'ADJUSTMENT_REJECTED';
+      const reason = event.event_type === 'AdjustedQuoteCreated'
+        ? 'Inspección generó una cotización ajustada pendiente de respuesta.'
+        : event.event_type === 'AdjustedQuoteAccepted'
+          ? 'El cliente aceptó el precio ajustado.'
+          : 'El cliente rechazó el precio ajustado.';
+      await client.query(
+        `SELECT set_config('reecicla.operator_user_id', $1, true),
+                set_config('reecicla.status_reason', $2, true)`,
+        [event.payload.responded_by_user_id ?? '', reason]
+      );
+
+      const statusFilter = ['INSPECTED', 'ADJUSTMENT_PENDING'];
+      const update = event.event_type === 'AdjustedQuoteAccepted'
+        ? `UPDATE orders
+           SET status = $1, final_price = $2, updated_at = NOW()
+           WHERE id = $3 AND tenant_id = $4 AND quote_id = $5
+             AND status = ANY($6::varchar[])`
+        : event.event_type === 'AdjustedQuoteRejected'
+          ? `UPDATE orders
+             SET status = $1, adjustment_rejected_at = NOW(), updated_at = NOW()
+             WHERE id = $2 AND tenant_id = $3 AND quote_id = $4
+               AND status = ANY($5::varchar[])`
+          : `UPDATE orders
+             SET status = $1, updated_at = NOW()
+             WHERE id = $2 AND tenant_id = $3 AND quote_id = $4
+               AND status = ANY($5::varchar[])`;
+      const parameters = event.event_type === 'AdjustedQuoteAccepted'
+        ? [
+          target,
+          event.payload.adjusted_price,
+          event.payload.order_id,
+          event.tenant_id,
+          event.payload.parent_quote_id,
+          statusFilter,
+        ]
+        : [
+          target,
+          event.payload.order_id,
+          event.tenant_id,
+          event.payload.parent_quote_id,
+          statusFilter,
+        ];
+      const updated = await client.query(update, parameters);
+      if (updated.rowCount === 0) {
+        const existing = await client.query(
+          `SELECT status FROM orders
+           WHERE id = $1 AND tenant_id = $2 AND quote_id = $3`,
+          [event.payload.order_id, event.tenant_id, event.payload.parent_quote_id]
+        );
+        if (
+          event.event_type === 'AdjustedQuoteCreated' &&
+          ['PAYMENT_PENDING', 'ADJUSTMENT_REJECTED'].includes(existing.rows[0]?.status)
+        ) {
+          await client.query('COMMIT');
+          return;
+        }
+        if (existing.rows[0]?.status !== target) {
+          throw new Error('La orden no está en un estado que permita procesar la respuesta al ajuste.');
+        }
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  static async authorizeAdjustedQuoteResponse(
+    token: string,
+    parentQuoteId: string
+  ): Promise<{ id: string; tenant_id: string } | null> {
+    if (!/^[0-9a-f]{64}$/i.test(token)) return null;
+    const providedHash = trackingTokenHash(token);
+    const result = await pool.query<{ id: string; tenant_id: string; tracking_token_hash: Buffer }>(
+      `SELECT id, tenant_id, tracking_token_hash
+       FROM orders
+       WHERE tracking_token_hash = $1
+         AND tracking_token_expires_at > NOW()
+         AND quote_id = $2
+         AND status IN ('INSPECTED', 'ADJUSTMENT_PENDING')`,
+      [providedHash, parentQuoteId]
+    );
+    const order = result.rows[0];
+    if (!order) return null;
+    const storedHash = Buffer.from(order.tracking_token_hash);
+    if (storedHash.length !== providedHash.length || !timingSafeEqual(storedHash, providedHash)) {
+      return null;
+    }
+    return { id: order.id, tenant_id: order.tenant_id };
+  }
+
+  static async resolveAdjustmentForUser(
+    orderId: string,
+    tenantId: string,
+    userId: string,
+    resolution: AdjustmentResolution
+  ): Promise<{ resolution: AdjustmentResolution; automatic: boolean }> {
+    return OrderModel.resolveAdjustment({ orderId, tenantId, userId, resolution });
+  }
+
+  static async resolveAdjustmentByTrackingToken(
+    token: string,
+    resolution: AdjustmentResolution
+  ): Promise<{ resolution: AdjustmentResolution; automatic: boolean }> {
+    if (!/^[0-9a-f]{64}$/i.test(token)) throw new Error('El enlace de seguimiento no es válido o venció.');
+    return OrderModel.resolveAdjustment({ token, resolution });
+  }
+
+  private static async resolveAdjustment(input: {
+    orderId?: string;
+    tenantId?: string;
+    userId?: string;
+    token?: string;
+    resolution: AdjustmentResolution;
+  }): Promise<{ resolution: AdjustmentResolution; automatic: boolean }> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const params = input.token
+        ? [trackingTokenHash(input.token)]
+        : [input.orderId, input.tenantId, input.userId];
+      const where = input.token
+        ? 'tracking_token_hash = $1 AND tracking_token_expires_at > NOW()'
+        : 'id = $1 AND tenant_id = $2 AND user_id = $3';
+      const result = await client.query<{
+        id: string;
+        tenant_id: string;
+        status: string;
+        adjustment_rejected_at: Date | null;
+        adjustment_resolution: AdjustmentResolution | null;
+        deadline_passed: boolean;
+      }>(
+        `SELECT id, tenant_id, status, adjustment_rejected_at, adjustment_resolution,
+                adjustment_rejected_at <= NOW() - INTERVAL '7 days' AS deadline_passed
+         FROM orders WHERE ${where} FOR UPDATE`,
+        params
+      );
+      const order = result.rows[0];
+      if (!order) throw new Error('Orden no encontrada o enlace de seguimiento vencido.');
+      if (order.status !== 'ADJUSTMENT_REJECTED' || !order.adjustment_rejected_at) {
+        throw new Error('La orden no tiene un ajuste rechazado pendiente de resolución.');
+      }
+      if (order.adjustment_resolution) {
+        throw new Error('El destino del equipo ya fue elegido.');
+      }
+
+      const expired = order.deadline_passed;
+      const resolution = expired ? 'RECYCLE' : input.resolution;
+      const reason = expired
+        ? 'Venció el plazo de 7 días sin respuesta; reciclaje sin pago según S2.'
+        : resolution === 'RETURN'
+          ? 'El cliente solicitó la devolución del equipo, a su cargo, según S2.'
+          : 'El cliente eligió el reciclaje del equipo sin pago, según S2.';
+      await client.query(
+        `INSERT INTO dispositions (tenant_id, order_id, type, status)
+         VALUES ($1, $2, $3, 'PENDING')
+         ON CONFLICT (order_id) DO NOTHING`,
+        [order.tenant_id, order.id, resolution]
+      );
+      await client.query(
+        `UPDATE orders
+         SET adjustment_resolution = $1, adjustment_resolution_at = NOW(), updated_at = NOW()
+         WHERE id = $2 AND tenant_id = $3`,
+        [resolution, order.id, order.tenant_id]
+      );
+      await client.query(
+        `INSERT INTO order_status_history
+           (tenant_id, order_id, previous_status, new_status, changed_by_user, reason)
+         VALUES ($1, $2, 'ADJUSTMENT_REJECTED', 'ADJUSTMENT_REJECTED', $3, $4)`,
+        [order.tenant_id, order.id, input.userId ?? null, reason]
+      );
+      await client.query('COMMIT');
+      return { resolution, automatic: expired };
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  static async applyExpiredAdjustmentRejections(): Promise<number> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const due = await client.query<{ id: string; tenant_id: string }>(
+        `SELECT id, tenant_id FROM orders
+         WHERE status = 'ADJUSTMENT_REJECTED'
+           AND adjustment_rejected_at <= NOW() - INTERVAL '7 days'
+           AND adjustment_resolution IS NULL
+         ORDER BY adjustment_rejected_at
+         LIMIT 100
+         FOR UPDATE SKIP LOCKED`
+      );
+      for (const order of due.rows) {
+        await client.query(
+          `INSERT INTO dispositions (tenant_id, order_id, type, status)
+           VALUES ($1, $2, 'RECYCLE', 'PENDING')
+           ON CONFLICT (order_id) DO NOTHING`,
+          [order.tenant_id, order.id]
+        );
+        await client.query(
+          `UPDATE orders
+           SET adjustment_resolution = 'RECYCLE', adjustment_resolution_at = NOW(), updated_at = NOW()
+           WHERE id = $1 AND tenant_id = $2 AND adjustment_resolution IS NULL`,
+          [order.id, order.tenant_id]
+        );
+        await client.query(
+          `INSERT INTO order_status_history
+             (tenant_id, order_id, previous_status, new_status, reason)
+           VALUES ($1, $2, 'ADJUSTMENT_REJECTED', 'ADJUSTMENT_REJECTED',
+                   'Venció el plazo de 7 días sin respuesta; reciclaje sin pago según S2.')`,
+          [order.tenant_id, order.id]
+        );
+      }
+      await client.query('COMMIT');
+      return due.rowCount ?? 0;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+
   static async getByTrackingToken(token: string): Promise<Record<string, unknown> | null> {
     if (!/^[0-9a-f]{64}$/i.test(token)) return null;
     const providedHash = trackingTokenHash(token);
     const result = await pool.query(
       `SELECT o.order_number, o.quote_id, o.device_type_name, o.brand, o.model,
-              o.device_year, o.declared_condition, o.quoted_price, o.currency, o.status,
+              o.device_year, o.declared_condition, o.quoted_price, o.final_price, o.currency, o.status,
+              o.adjustment_rejected_at, o.adjustment_resolution, o.adjustment_resolution_at,
               o.accepted_at, o.created_at,
               o.tracking_token_hash, o.tracking_token_expires_at,
               b.tracking_code, b.status AS box_status, b.shipped_at,

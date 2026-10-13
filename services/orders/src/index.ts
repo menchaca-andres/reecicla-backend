@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import cors from 'cors';
 import orderRoutes from './routes/orderRoutes';
 import { pool } from './config/db';
+import { OrderModel } from './models/orderModel';
 import {
   closeQuoteAcceptedConsumer,
   startInspectionCompletedConsumer,
@@ -20,6 +21,13 @@ const outboxTimer = setInterval(() => {
     console.error('[Orders] No se pudieron publicar eventos pendientes:', error)
   );
 }, 5000);
+const adjustmentDeadlineTimer = setInterval(() => {
+  OrderModel.applyExpiredAdjustmentRejections()
+    .then((count) => {
+      if (count > 0) console.log(`[Orders] Aplicado reciclaje por vencimiento a ${count} ajuste(s) rechazado(s).`);
+    })
+    .catch((error) => console.error('[Orders] No se pudieron cerrar ajustes vencidos:', error));
+}, 60_000);
 
 app.use(cors());
 app.use(express.json());
@@ -40,6 +48,7 @@ const server = app.listen(PORT, async () => {
 
 async function shutdown(): Promise<void> {
   clearInterval(outboxTimer);
+  clearInterval(adjustmentDeadlineTimer);
   server.close();
   await closeQuoteAcceptedConsumer();
   await closeEventPublisher();

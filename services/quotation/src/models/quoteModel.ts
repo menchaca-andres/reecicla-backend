@@ -1,5 +1,12 @@
 import { pool } from '../config/db';
-import { DomainEvent, InspectionCompletedPayload, Quote, CreateQuoteDTO } from '../types/quotation';
+import {
+  AdjustedQuoteCreatedPayload,
+  AdjustedQuoteDecisionPayload,
+  DomainEvent,
+  InspectionCompletedPayload,
+  Quote,
+  CreateQuoteDTO,
+} from '../types/quotation';
 import { randomUUID } from 'crypto';
 import {
   buildAdjustmentJustification,
@@ -122,6 +129,25 @@ export class QuoteModel {
           justification,
         ]
       );
+      if (adjustedQuoteId) {
+        const eventId = randomUUID();
+        await client.query(
+          `INSERT INTO quote_event_outbox (event_id, correlation_id, tenant_id, event_type, payload)
+           VALUES ($1, $2, $3, 'AdjustedQuoteCreated', $4)`,
+          [
+            eventId,
+            event.payload.order_id,
+            event.tenant_id,
+            JSON.stringify({
+              order_id: event.payload.order_id,
+              quote_id: adjustedQuoteId,
+              parent_quote_id: original.id,
+              adjusted_price: adjustedPrice,
+              currency: original.currency,
+            } satisfies AdjustedQuoteCreatedPayload),
+          ]
+        );
+      }
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK').catch(() => undefined);
@@ -288,6 +314,89 @@ export class QuoteModel {
     );
     if (!rows[0]) throw new Error('La cotización inicial no está pendiente o no existe.');
     return rows[0];
+  }
+
+  static async respondToAdjustedQuote(
+    quoteId: string,
+    tenantId: string,
+    userId: string | null,
+    decision: 'ACCEPT' | 'REJECT',
+    authorizedOrderId: string | null
+  ): Promise<Quote> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query<Quote & {
+        order_id: string;
+        parent_quote_id: string;
+      }>(
+        `SELECT q.*, q.device_type_name AS device_type, a.order_id
+         FROM quotes q
+         JOIN quote_adjustment_audits a
+           ON a.tenant_id = q.tenant_id AND a.adjusted_quote_id = q.id
+         WHERE q.id = $1 AND q.tenant_id = $2 AND q.quote_type = 'ADJUSTED'
+         FOR UPDATE OF q`,
+        [quoteId, tenantId]
+      );
+      const quote = result.rows[0];
+      if (!quote) throw new Error('Cotización ajustada no encontrada.');
+      if (quote.status !== 'PENDING') {
+        throw new Error('La cotización ajustada ya no está pendiente.');
+      }
+      if (new Date(quote.valid_until).getTime() <= Date.now()) {
+        await client.query(`UPDATE quotes SET status = 'EXPIRED' WHERE id = $1`, [quote.id]);
+        await client.query('COMMIT');
+        throw new Error('La cotización ajustada venció y no puede responderse.');
+      }
+      if (userId && quote.user_id !== userId) {
+        throw new Error('No tienes permiso para responder esta cotización.');
+      }
+      if (!userId && authorizedOrderId !== quote.order_id) {
+        throw new Error('El enlace de seguimiento no corresponde a esta cotización.');
+      }
+      if (!quote.parent_quote_id) {
+        throw new Error('La cotización ajustada no está vinculada a una cotización original.');
+      }
+
+      const accepted = decision === 'ACCEPT';
+      const status = accepted ? 'ACCEPTED' : 'REJECTED';
+      const eventType = accepted ? 'AdjustedQuoteAccepted' : 'AdjustedQuoteRejected';
+      const eventId = randomUUID();
+      const payload: AdjustedQuoteDecisionPayload = {
+        order_id: quote.order_id,
+        quote_id: quote.id,
+        parent_quote_id: quote.parent_quote_id,
+        adjusted_price: Number(quote.final_price),
+        currency: quote.currency,
+        responded_by_user_id: userId,
+        responded_at: new Date().toISOString(),
+      };
+      const updated = await client.query<Quote>(
+        `UPDATE quotes SET status = $1
+         WHERE id = $2 AND tenant_id = $3 AND status = 'PENDING'
+         RETURNING *, device_type_name AS device_type`,
+        [status, quote.id, tenantId]
+      );
+      if (!updated.rows[0]) throw new Error('La cotización ajustada ya no está pendiente.');
+      await client.query(
+        `INSERT INTO quote_event_outbox (event_id, correlation_id, tenant_id, event_type, payload)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [
+          eventId,
+          quote.order_id,
+          tenantId,
+          eventType,
+          JSON.stringify(payload),
+        ]
+      );
+      await client.query('COMMIT');
+      return updated.rows[0];
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   static async findById(id: string): Promise<Quote | null> {

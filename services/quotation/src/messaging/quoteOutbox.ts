@@ -17,7 +17,15 @@ export async function dispatchPendingQuoteEvents(): Promise<void> {
     );
 
     for (const event of rows) {
-      await publishEvent('quote.accepted', {
+      const routingKeys: Record<string, string> = {
+        QuoteAccepted: 'quote.accepted',
+        AdjustedQuoteCreated: 'quote.adjusted.created',
+        AdjustedQuoteAccepted: 'quote.adjusted.accepted',
+        AdjustedQuoteRejected: 'quote.adjusted.rejected',
+      };
+      const routingKey = routingKeys[event.event_type];
+      if (!routingKey) throw new Error(`Tipo de evento de cotización no soportado: ${event.event_type}`);
+      await publishEvent(routingKey, {
         event_id: event.event_id,
         correlation_id: event.correlation_id,
         event_type: event.event_type,

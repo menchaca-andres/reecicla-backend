@@ -78,6 +78,18 @@ export interface InspectionCompletedPayload {
   completed_at: string;
 }
 
+export interface AdjustedQuoteEventPayload {
+  order_id: string;
+  quote_id: string;
+  parent_quote_id: string;
+  adjusted_price: number;
+  currency: string;
+  responded_by_user_id?: string | null;
+  responded_at?: string;
+}
+
+export type AdjustmentResolution = 'RETURN' | 'RECYCLE';
+
 export type BoxRequestStatus = 'REQUESTED' | 'SHIPPED' | 'DELIVERED' | 'LOST' | 'CANCELLED';
 
 export interface BoxRequest {

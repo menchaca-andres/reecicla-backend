@@ -4,6 +4,27 @@ import { OrderModel } from '../models/orderModel';
 import { dispatchPendingOrderEvents } from '../messaging/eventPublisher';
 
 export class OrderController {
+  static async authorizeAdjustedQuoteResponse(req: Request, res: Response): Promise<void> {
+    const trackingToken = req.body?.tracking_token;
+    const parentQuoteId = req.body?.parent_quote_id;
+    if (typeof trackingToken !== 'string' || typeof parentQuoteId !== 'string') {
+      res.status(400).json({ error: 'Se requieren un token de seguimiento y una cotización original.' });
+      return;
+    }
+    try {
+      const order = await OrderModel.authorizeAdjustedQuoteResponse(trackingToken, parentQuoteId);
+      if (!order) {
+        res.status(403).json({ error: 'El enlace no autoriza responder esta cotización ajustada.' });
+        return;
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(200).json({ order });
+    } catch (error) {
+      console.error('[Orders] No se pudo validar el enlace para responder el ajuste:', error);
+      res.status(500).json({ error: 'No se pudo validar el enlace de seguimiento.' });
+    }
+  }
+
   static async track(req: Request, res: Response): Promise<void> {
     try {
       const order = await OrderModel.getByTrackingToken(req.params.token);
@@ -17,6 +38,57 @@ export class OrderController {
     } catch (error) {
       console.error('[Orders] Error consultando seguimiento de invitado:', error);
       res.status(500).json({ error: 'No se pudo consultar el seguimiento del pedido.' });
+    }
+  }
+
+  static async resolveAdjustmentAsGuest(req: Request, res: Response): Promise<void> {
+    const resolution = req.body?.resolution;
+    if (resolution !== 'RETURN' && resolution !== 'RECYCLE') {
+      res.status(400).json({ error: 'El destino debe ser RETURN o RECYCLE.' });
+      return;
+    }
+    try {
+      const result = await OrderModel.resolveAdjustmentByTrackingToken(req.params.token, resolution);
+      res.status(200).json({
+        message: result.automatic
+          ? 'Venció el plazo de 7 días; se registró el reciclaje sin pago.'
+          : 'Se registró el destino seleccionado.',
+        ...result,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudo elegir el destino.';
+      const status = message.includes('no encontrada') || message.includes('venció') ? 404 : 409;
+      res.status(status).json({ error: message });
+    }
+  }
+
+  static async resolveAdjustmentAsUser(req: AuthenticatedRequest, res: Response): Promise<void> {
+    if (!req.authUser) {
+      res.status(401).json({ error: 'Usuario no autenticado.' });
+      return;
+    }
+    const resolution = req.body?.resolution;
+    if (resolution !== 'RETURN' && resolution !== 'RECYCLE') {
+      res.status(400).json({ error: 'El destino debe ser RETURN o RECYCLE.' });
+      return;
+    }
+    try {
+      const result = await OrderModel.resolveAdjustmentForUser(
+        req.params.id,
+        req.authUser.tenantId,
+        req.authUser.userId,
+        resolution
+      );
+      res.status(200).json({
+        message: result.automatic
+          ? 'Venció el plazo de 7 días; se registró el reciclaje sin pago.'
+          : 'Se registró el destino seleccionado.',
+        ...result,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudo elegir el destino.';
+      const status = message.includes('no encontrada') ? 404 : 409;
+      res.status(status).json({ error: message });
     }
   }
 

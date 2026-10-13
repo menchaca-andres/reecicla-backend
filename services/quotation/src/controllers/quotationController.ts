@@ -191,6 +191,51 @@ export class QuotationController {
     }
   }
 
+  static async respondToAdjustedQuote(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const tenantId = gatewayTenantId(req);
+      if (!tenantId) {
+        res.status(400).json({ error: 'No se pudo determinar el contexto del negocio.' });
+        return;
+      }
+      const mismatch = assertTenantAccess(req, tenantId);
+      if (mismatch) {
+        res.status(403).json({ error: mismatch });
+        return;
+      }
+      const decision = req.body?.decision;
+      if (decision !== 'ACCEPT' && decision !== 'REJECT') {
+        res.status(400).json({ error: 'La decisión debe ser ACCEPT o REJECT.' });
+        return;
+      }
+
+      const quote = await QuotationService.respondToAdjustedQuote({
+        quoteId: req.params.id,
+        tenantId,
+        userId: req.authUser?.userId ?? null,
+        decision,
+        trackingToken: typeof req.body?.tracking_token === 'string' ? req.body.tracking_token : undefined,
+      });
+      dispatchPendingQuoteEvents().catch((error) =>
+        console.error('[Quotation] La respuesta quedó en outbox; se reintentará publicar:', error)
+      );
+      res.status(200).json({
+        message: decision === 'ACCEPT'
+          ? 'Precio ajustado aceptado. La orden pasará a pago pendiente.'
+          : 'Precio ajustado rechazado. Elige devolución o reciclaje desde el seguimiento del pedido.',
+        quote,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudo responder la cotización ajustada.';
+      const statusCode = message.includes('No se pudo validar el enlace') ? 502 :
+        message.includes('permiso') || message.includes('enlace de seguimiento') ||
+        message.includes('iniciar sesión') ? 403 :
+        message.includes('no encontrada') ? 404 :
+        message.includes('ya no está pendiente') || message.includes('venció') ? 409 : 400;
+      res.status(statusCode).json({ error: message });
+    }
+  }
+
   static async getUserQuotes(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const tenantId = gatewayTenantId(req) ?? req.authUser?.tenantId;
