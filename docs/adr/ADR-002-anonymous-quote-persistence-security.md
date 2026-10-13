@@ -1,97 +1,123 @@
-# ADR-002: Inmutabilidad, Persistencia y Seguridad de Cotizaciones Anónimas
+# ADR-002: Persistencia, Ciclo de Vida y Seguridad de Cotizaciones
 
-| Campo         | Detalle                                                            |
-|---------------|--------------------------------------------------------------------|
-| **Estado**    | Aceptado                                                           |
-| **Fecha**     | 2026-10-09                                                         |
-| **Autores**   | Equipo Reecicla                                                    |
-| **Contexto**  | Sprint 3 — Persistencia, Ciclo de Vida y Seguridad de Cotizaciones |
+| Campo | Detalle |
+|---|---|
+| **Estado** | Aceptado; revisado el 2026-10-13 |
+| **Fecha original** | 2026-10-09 |
+| **Autores** | Equipo Reecicla |
+| **Contexto** | Sprint 3 — Persistencia, ciclo de vida y seguridad de cotizaciones |
 
 ---
 
 ## Contexto
 
-Con la adopción de la cotización anónima ([ADR-001](ADR-001-tenant-resolution-anonymous-quotation.md)), los clientes generan cotizaciones sin autenticación previa. Esto plantea desafíos de diseño de software y seguridad:
+La cotización es una oferta comercial: el sistema debe conservar lo declarado por el cliente y el precio calculado, aunque después cambien el catálogo o las reglas. La cotización también debe poder recuperarse desde el mismo navegador y, una vez creada la orden, ofrecer seguimiento por correo. Al mismo tiempo, el flujo público debe aislar los tenants, limitar abuso y preservar las cotizaciones abandonadas solo durante un periodo acotado.
 
-1. **Compromiso de precio y defensa legal**: La cotización es una promesa comercial. Si las reglas de precio cambian posteriormente o si tras la inspección física hay un reajuste, el sistema debe conservar exactamente lo que el cliente declaró y el precio que se le ofreció.
-2. **UX de retorno**: Un cliente suele cotizar, cerrar el navegador para pensarlo y retornar más tarde. Si la cotización desaparece, la fricción aumenta y el cliente abandona.
-3. **Seguridad y Anti-abuso**: Exponer identificadores de cotización no debe permitir que terceros adivinen o manipulen cotizaciones ajenas.
-4. **Métricas de negocio**: Se necesita medir el embudo de conversión (cotizadas vs. aceptadas) y controlar cuotas de uso (plan freemium del tenant) aun para usuarios no registrados.
+ADR-001 define cómo se resuelve el tenant y cómo un cliente puede aceptar como invitado o autenticado. Este ADR define qué datos se conservan, cómo evoluciona la cotización y qué protección ofrece cada identificador.
 
 ---
 
 ## Decisión
 
-Se establecen las siguientes directrices arquitectónicas para el manejo de cotizaciones anónimas:
+### 1. Snapshot de cada oferta
 
-### 1. Inmutabilidad de la Cotización
+Quotation calcula y persiste el precio en servidor. Cada fila guarda el tenant, equipo declarado, marca/modelo/año/condición, regla aplicada cuando corresponda, moneda y desglose (`base_price`, `adjustment`, `final_price`). Los cambios posteriores al catálogo o a las reglas no recalculan una oferta existente.
 
-Cada cotización generada en la base de datos es **inmutable**:
-- Guarda un snapshot exacto de la declaración (`device_type`, `brand`, `model`, `year`, `condition`).
-- Guarda el desglose económico exacto (`base_price`, `adjustment`, `final_price`, `currency`).
-- Vincula la versión específica de la regla de precio aplicada (`pricing_rule_id`).
-- Ningún cambio posterior en el catálogo o en las reglas de precio modifica cotizaciones ya emitidas.
+La oferta se trata como inmutable respecto a su declaración y valores económicos. El estado de ciclo de vida sí cambia y una aceptación autenticada puede asociar `user_id`. La base actual no impone la inmutabilidad económica con triggers ni permisos específicos; se mantiene por las operaciones del servicio.
 
-### 2. Ciclo de Vida y Máquina de Estados
+Las cotizaciones ajustadas se representan como una cotización nueva, enlazada a la original y con justificación/auditoría, en vez de sobrescribir el snapshot anterior. El flujo de aceptación/rechazo de cotizaciones ajustadas tiene alcance propio y debe implementarse antes de habilitarse de extremo a extremo.
 
-La cotización sigue un flujo estricto de estados:
+### 2. Estados y vencimiento
 
+Las cotizaciones iniciales siguen los estados persistidos:
+
+```text
+Solicitud pública                    Solicitud autenticada
+       │                                      │
+       ▼                                      ▼
+  ANONYMOUS                               PENDING
+       │                                      │
+       ├── aceptar como invitado ─────────────┤
+       │   (requiere OTP válido)               │
+       └── aceptar autenticado ────────────────┘
+                         │
+                         ▼
+                      ACCEPTED
+
+  ANONYMOUS o PENDING ──► REJECTED
+  ANONYMOUS o PENDING ──► EXPIRED
 ```
-[Inicio] ──> ANONYMOUS ──┬──> ACCEPTED (Cliente ingresa datos / crea orden)
-                         ├──> EXPIRED  (Supera valid_until)
-                         └──> REJECTED (Cliente descarta la oferta)
-```
 
-- **Vigencia (`valid_until`)**: Cada cotización nace con un plazo de validez de 30 días. Superado este plazo, el servidor la marca como `EXPIRED` y rechaza su aceptación. Actualmente el plazo está fijado en código y no es configurable.
-- **Aceptación Guest**: Al momento de aceptar la cotización, se capturan y verifican los datos del cliente (`customer_name`, `customer_email`, `phone`, `address`). La cotización pasa a `ACCEPTED` y se emite el evento para la orden de recolección. No se crea un usuario ni se emite un JWT; crear una cuenta después es opcional.
+- Cotizaciones sin `user_id` se crean `ANONYMOUS`; las asociadas a un usuario, `PENDING`.
+- La aceptación requiere que el tenant coincida y que la cotización esté abierta y dentro de su vigencia.
+- Invitados deben verificar el correo por un OTP asociado al tenant, a la cotización y al email. Solo tras validar el código se acepta la oferta; no se crea usuario ni JWT.
+- Usuarios autenticados no necesitan OTP de aceptación. El identificador del usuario y el email proceden del JWT validado; nombre, teléfono y dirección de retiro pueden actualizarse desde el formulario de aceptación.
+- Las cotizaciones nacen con vigencia de 30 días, fijada actualmente en código. Un proceso periódico las marca `EXPIRED` después del vencimiento; la lectura de una cotización vencida responde `410`.
+- Quotation registra el cambio a `ACCEPTED` y un evento `QuoteAccepted` en la tabla outbox dentro de una transacción. El consumidor de Orders crea la orden de manera idempotente.
 
-### 3. Persistencia en Cliente y Tokens de Acceso
+Los OTP de invitado y de registro de cuenta son independientes. El OTP de registro crea una cuenta tenant-scoped y devuelve JWT después de verificar el email, pero no acepta por sí solo una cotización.
 
-- **El servidor siempre es la fuente de verdad**: El cliente nunca calcula ni almacena precios en frontend como ground truth.
-- **Identificadores y Tokens Opacos**: La cotización anónima se identifica mediante un UUID de alta entropía (`quote_id`). Actualmente ese UUID también permite leer la cotización durante su vigencia; no sustituye un mecanismo de autorización independiente.
-- **Almacenamiento en Web**: Se almacena el `quote_id` o token anónimo de sesión en la aplicación web para permitir la recuperación rápida de la cotización activa desde la misma máquina/navegador.
-- **Seguridad en API**: La consulta individual `GET /api/quotation/quotes/:id` requiere conocer la clave única de la cotización y estar dentro de su periodo de vigencia.
+### 3. Acceso y recuperación de cotizaciones
 
-### 4. Recuperación Multi-dispositivo (Magic Links)
+- El servidor es la fuente de verdad del precio. El frontend puede conservar el `quote_id` para regresar rápidamente a la oferta, pero no es fuente de autoridad económica.
+- El identificador de cotización es un UUID aleatorio. `GET /recicla/{slug}/api/quotation/quotes/:id` valida que la cotización pertenezca al tenant de la URL, pero no exige autenticación ni prueba de propiedad individual.
+- Por tanto, conocer el UUID dentro del tenant permite consultar la cotización; no es un token de autorización independiente. No almacenar ni divulgar IDs de cotización como secretos, y no asumir que UUID equivale a autorización por usuario.
+- Las solicitudes autenticadas se verifican contra el tenant del JWT en Gateway. Esta comprobación de tenant no equivale a una comprobación de propiedad de cada cotización.
+- El frontend guarda la referencia de cotización en almacenamiento local por tenant para recuperación en el mismo navegador. No se implementa un enlace para recuperar una cotización aún no aceptada desde otro dispositivo.
 
-Para permitir que el cliente consulte o acepte su cotización desde otro dispositivo (ej: cotizó en PC y quiere aceptar en móvil) sin obligarlo a crear una cuenta previa:
-- El sistema permite enviar la cotización por correo electrónico o SMS con un **enlace directo (Magic Link)** estructurado como:
-  `https://app.reecicla.com/recicla/{slug}/quote/{quote_id}`
+### 4. Seguimiento de órdenes
 
-**Estado de implementación:** el enlace de seguimiento de la orden se envía por SMTP después de crearla y permite consultarla desde otro dispositivo. El token es un HMAC vinculado al tenant y a la orden, su hash se almacena en Orders DB, solo permite lectura y vence en 90 días. No se implementa un enlace para recuperar cotizaciones que todavía no se aceptaron.
+Después de que Orders consume `QuoteAccepted`, genera un token HMAC vinculado al tenant y a la orden. Orders conserva el hash del token; el enlace se envía al correo y es de solo lectura. El token vence a los 90 días. Este enlace autoriza únicamente la consulta de seguimiento y no da acceso a la cotización ni a operaciones de escritura.
 
-### 5. Política de Retención y Purga de Datos (TTL)
+### 5. Retención y purga
 
-- **Cotizaciones Anónimas no Aceptadas**: Un proceso programado (cron/worker) purga o anonimiza cotizaciones en estado `ANONYMOUS` o `EXPIRED` tras superar el periodo de retención legal/operativo, conservando únicamente métricas agregadas desvinculadas.
-- **Cotizaciones Aceptadas**: Se conservan integras al formar parte del expediente de la orden de recolección y compraventa.
+Un temporizador de Quotation revisa la expiración cada minuto. También elimina cotizaciones **sin usuario** en estado `EXPIRED` o `REJECTED` cuyo `updated_at` tenga más de 90 días. El plazo de retención está fijado actualmente en código y no es configurable.
+
+Las cotizaciones aceptadas no se eliminan por esta purga; son parte del expediente de la orden. La implementación no realiza una anonimización previa ni conserva únicamente métricas agregadas.
 
 ---
 
-## Alternativas Descartadas
+## Alternativas descartadas
 
-### Alternativa A: No guardar cotizaciones anónimas en base de datos
-Calcular el precio "al vuelo" en memoria y guardarlo recién cuando el cliente acepte.
+### Calcular el precio solo al aceptar
 
-**Descartada porque**: Si las reglas de precio cambian entre el momento de la cotización y la aceptación, el sistema no tiene registro para validar qué precio se le prometió originalmente al cliente. Además impide medir la tasa de abandono del embudo.
+**Descartado:** perdería la evidencia de qué precio y reglas se mostraron y no permitiría medir el embudo de cotización.
 
-### Alternativa B: Almacenar la cotización completa en `localStorage` del frontend
-Usar el almacenamiento del navegador como base de datos primaria de cotizaciones.
+### Usar `localStorage` como almacenamiento primario
 
-**Descartada porque**: Es un riesgo de seguridad (tampering de precios desde la consola de JS) y no permite acceso multi-dispositivo ni auditoría del negocio.
+**Descartado:** el cliente podría modificar el precio y el dato no sería compartido entre dispositivos ni auditable desde el servidor. El almacenamiento local solo es una referencia de navegación.
+
+### Tratar el UUID como autorización suficiente
+
+**Descartado:** aunque la consulta actual permita encontrar una cotización por ID dentro del tenant, el UUID no es un mecanismo de autenticación/propiedad. Se documenta este comportamiento como limitación vigente, no como garantía de seguridad.
+
+### Sobrescribir una oferta al ajustar su precio
+
+**Descartado:** se debe preservar la oferta original para auditoría y comparación; un ajuste se representa mediante una nueva cotización enlazada y un registro de auditoría.
 
 ---
 
-## Consecuencias
+## Consecuencias e implementación
 
-- **Garantía Comercial**: Transparencia total entre lo que declaró el cliente y lo que ofreció el negocio.
-- **Rendimiento**: Consultas eficientes mediante índices parciales en Postgres (`status = 'ANONYMOUS'`, `valid_until`).
-- **Escalabilidad**: Política clara de limpieza para evitar crecimiento desmedido de registros huérfanos.
+- La cotización mantiene el snapshot de precio y datos del equipo; los estados y la asociación de usuario pueden cambiar según el ciclo de vida.
+- `user_id` es nullable para permitir la ruta invitada y se usa como vínculo de cuenta en cotizaciones autenticadas.
+- El `tenant_id` se compara al leer, aceptar o rechazar una cotización y proviene de la resolución descrita en [ADR-001](ADR-001-tenant-resolution-anonymous-quotation.md).
+- El evento de aceptación usa outbox para no perder el mensaje entre la transacción de Quotation y la creación eventual de la orden.
+- La creación de orden es idempotente por tenant y cotización; el seguimiento de orden utiliza un token distinto al UUID de cotización.
+- Se crean índices para consultas de cotizaciones abiertas y expiración.
 
-**Estado de implementación:** se conserva el snapshot de precios y datos en el flujo normal; la aceptación invitada conserva `user_id` nulo y asocia la orden con el tenant y los datos de contacto verificados. La inmutabilidad no está forzada actualmente mediante triggers o permisos de base de datos. El vencimiento está fijado en 30 días y la retención de 90 días también está fijada en código; se purgan cotizaciones anónimas rechazadas/vencidas tras ese plazo.
+### Límites y trabajo futuro
+
+1. Reforzar la integridad del snapshot económico mediante permisos de DB, lógica inmutable o auditoría que detecte modificaciones fuera del flujo autorizado.
+2. Definir autorización de lectura por propietario o un enlace de recuperación de cotización con token dedicado y expiración; el UUID actual no prueba identidad.
+3. Hacer configurables y revisar formalmente los plazos de 30 días (vigencia), 90 días (purga y seguimiento).
+4. Evaluar límites distribuidos para Gateway si se despliegan varias réplicas.
+5. Definir política legal y operativa de anonimización/retención acorde a los datos personales capturados.
 
 ---
 
 ## Referencias
 
-- [ADR-001: Resolución Automática de Tenant y Cotización Anónima](ADR-001-tenant-resolution-anonymous-quotation.md)
-- Especificación funcional de Cotizaciones (Reecicla v1.0)
+- [ADR-001: Resolución de tenant, cotización pública y autenticación del cliente](ADR-001-tenant-resolution-anonymous-quotation.md)
+- [Especificación funcional Reecicla](../Reecicla%20definitivo.pdf)
+- Implementación: `services/quotation`, `services/auth`, `services/orders` y `services/gateway`
