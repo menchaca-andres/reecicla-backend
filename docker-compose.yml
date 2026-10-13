@@ -3,6 +3,7 @@ services:
   auth-db:
     image: postgres:16-alpine
     container_name: reecicla-auth-db
+    restart: unless-stopped
     environment:
       POSTGRES_DB: reecicla_auth_db
       POSTGRES_USER: reecicla_user
@@ -10,13 +11,19 @@ services:
     ports:
       - "5431:5432"
     volumes:
-      - ./services/auth/db/01-auth-migration.sql:/docker-entrypoint-initdb.d/01-auth-migration.sql
+      - ./services/auth/db:/docker-entrypoint-initdb.d
       - auth_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reecicla_user -d reecicla_auth_db"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
 
   # Base de Datos para Quotation Service
   quotation-db:
     image: postgres:16-alpine
     container_name: reecicla-quotation-db
+    restart: unless-stopped
     environment:
       POSTGRES_DB: reecicla_quotation_db
       POSTGRES_USER: reecicla_user
@@ -24,27 +31,19 @@ services:
     ports:
       - "5435:5432"
     volumes:
-      - ./services/quotation/db/02-quotation-migration.sql:/docker-entrypoint-initdb.d/02-quotation-migration.sql
+      - ./services/quotation/db:/docker-entrypoint-initdb.d
       - quotation_db_data:/var/lib/postgresql/data
-
-  # Base de Datos para Orders Service
-  orders-db:
-    image: postgres:16-alpine
-    container_name: reecicla-orders-db
-    environment:
-      POSTGRES_DB: reecicla_orders_db
-      POSTGRES_USER: reecicla_user
-      POSTGRES_PASSWORD: reecicla_password
-    ports:
-      - "5433:5432"
-    volumes:
-      - ./03-orders-migration.sql:/docker-entrypoint-initdb.d/03-orders-migration.sql
-      - orders_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reecicla_user -d reecicla_quotation_db"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
 
   # Base de Datos para Catalog Service
   catalog-db:
     image: postgres:16-alpine
     container_name: reecicla-catalog-db
+    restart: unless-stopped
     environment:
       POSTGRES_DB: reecicla_catalog_db
       POSTGRES_USER: reecicla_user
@@ -52,49 +51,184 @@ services:
     ports:
       - "5434:5432"
     volumes:
-      - ./04-catalog-migration.sql:/docker-entrypoint-initdb.d/04-catalog-migration.sql
+      - ./services/catalog/db:/docker-entrypoint-initdb.d
       - catalog_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reecicla_user -d reecicla_catalog_db"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
 
-  # Microservicios de Aplicación
+  # Base de Datos para Orders Service
+  orders-db:
+    image: postgres:16-alpine
+    container_name: reecicla-orders-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: reecicla_orders_db
+      POSTGRES_USER: reecicla_user
+      POSTGRES_PASSWORD: reecicla_password
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./services/orders/db:/docker-entrypoint-initdb.d
+      - orders_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reecicla_user -d reecicla_orders_db"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+
+  # Broker de Mensajería RabbitMQ
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: reecicla-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: reecicla
+      RABBITMQ_DEFAULT_PASS: reecicla_password
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Servidor SMTP de desarrollo Mailpit
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: reecicla-mailpit
+    restart: unless-stopped
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  # Microservicio Auth
   auth-service:
     build:
       context: ./services/auth
       dockerfile: Dockerfile
     container_name: reecicla-auth-service
-    env_file:
-      - ./services/auth/.env
+    restart: unless-stopped
+    environment:
+      PORT: 3001
+      JWT_SECRET: ${JWT_SECRET:-super_secret_jwt_reecicla_development_2026}
+      DATABASE_URL: postgres://reecicla_user:reecicla_password@auth-db:5432/reecicla_auth_db
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-super_secret_internal_token_reecicla_2026}
+      RABBITMQ_URL: amqp://reecicla:reecicla_password@rabbitmq:5672
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      SMTP_SECURE: "false"
+      SMTP_FROM: "Reecicla <no-reply@reecicla.local>"
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      TRACKING_LINK_ALLOWED_ORIGINS: ${TRACKING_LINK_ALLOWED_ORIGINS:-http://localhost:5173}
     ports:
       - "3001:3001"
     depends_on:
-      - auth-db
+      auth-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
 
+  # Microservicio Catalog
+  catalog-service:
+    build:
+      context: ./services/catalog
+      dockerfile: Dockerfile
+    container_name: reecicla-catalog-service
+    restart: unless-stopped
+    environment:
+      PORT: 3003
+      JWT_SECRET: ${JWT_SECRET:-super_secret_jwt_reecicla_development_2026}
+      DATABASE_URL: postgres://reecicla_user:reecicla_password@catalog-db:5432/reecicla_catalog_db
+      RABBITMQ_URL: amqp://reecicla:reecicla_password@rabbitmq:5672
+    ports:
+      - "3003:3003"
+    depends_on:
+      catalog-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  # Microservicio Quotation
   quotation-service:
     build:
       context: ./services/quotation
       dockerfile: Dockerfile
     container_name: reecicla-quotation-service
-    env_file:
-      - ./services/quotation/.env
+    restart: unless-stopped
+    environment:
+      PORT: 3002
+      JWT_SECRET: ${JWT_SECRET:-super_secret_jwt_reecicla_development_2026}
+      DATABASE_URL: postgres://reecicla_user:reecicla_password@quotation-db:5432/reecicla_quotation_db
+      AUTH_SERVICE_URL: http://auth-service:3001
+      CATALOG_SERVICE_URL: http://catalog-service:3003
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-super_secret_internal_token_reecicla_2026}
+      RABBITMQ_URL: amqp://reecicla:reecicla_password@rabbitmq:5672
     ports:
       - "3002:3002"
     depends_on:
-      - quotation-db
+      quotation-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+      catalog-service:
+        condition: service_started
 
+  # Microservicio Orders
+  orders-service:
+    build:
+      context: ./services/orders
+      dockerfile: Dockerfile
+    container_name: reecicla-orders-service
+    restart: unless-stopped
+    environment:
+      PORT: 3004
+      JWT_SECRET: ${JWT_SECRET:-super_secret_jwt_reecicla_development_2026}
+      DATABASE_URL: postgres://reecicla_user:reecicla_password@orders-db:5432/reecicla_orders_db
+      AUTH_SERVICE_URL: http://auth-service:3001
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-super_secret_internal_token_reecicla_2026}
+      RABBITMQ_URL: amqp://reecicla:reecicla_password@rabbitmq:5672
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+    ports:
+      - "3004:3004"
+    depends_on:
+      orders-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  # API Gateway
   gateway:
     build:
       context: ./services/gateway
       dockerfile: Dockerfile
     container_name: reecicla-gateway
-    env_file:
-      - ./services/gateway/.env
+    restart: unless-stopped
+    environment:
+      PORT: 3000
+      AUTH_SERVICE_URL: http://auth-service:3001
+      QUOTATION_SERVICE_URL: http://quotation-service:3002
+      CATALOG_SERVICE_URL: http://catalog-service:3003
+      ORDERS_SERVICE_URL: http://orders-service:3004
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-super_secret_internal_token_reecicla_2026}
+      QUOTE_RATE_LIMIT_PER_MINUTE: ${QUOTE_RATE_LIMIT_PER_MINUTE:-60}
+      EMAIL_VERIFICATION_RATE_LIMIT_PER_MINUTE: ${EMAIL_VERIFICATION_RATE_LIMIT_PER_MINUTE:-30}
     ports:
       - "3000:3000"
     depends_on:
       - auth-service
       - quotation-service
+      - catalog-service
+      - orders-service
 
 volumes:
   auth_db_data:
   quotation_db_data:
   orders_db_data:
   catalog_db_data:
+
