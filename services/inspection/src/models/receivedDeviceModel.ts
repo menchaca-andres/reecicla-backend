@@ -25,12 +25,13 @@ export class ReceivedDeviceModel {
       const payload = event.payload;
       await client.query(
         `INSERT INTO received_devices (
-           tenant_id, order_id, device_type_id, device_type_name, received_at, received_by_user
-         ) VALUES ($1, $2, $3, $4, $5, $6)
+           tenant_id, order_id, quote_id, device_type_id, device_type_name, received_at, received_by_user
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (tenant_id, order_id) DO NOTHING`,
         [
           event.tenant_id,
           payload.order_id,
+          payload.quote_id ?? null,
           payload.device_type_id,
           payload.device_type_name,
           payload.received_at,
@@ -49,7 +50,7 @@ export class ReceivedDeviceModel {
 
   static async findByOrder(tenantId: string, orderId: string): Promise<ReceivedDevice | null> {
     const { rows } = await pool.query(
-      `SELECT tenant_id, order_id, device_type_id, device_type_name, received_at, received_by_user
+      `SELECT tenant_id, order_id, quote_id, device_type_id, device_type_name, received_at, received_by_user
        FROM received_devices
        WHERE tenant_id = $1 AND order_id = $2`,
       [tenantId, orderId]
@@ -60,7 +61,7 @@ export class ReceivedDeviceModel {
   /** Equipos recibidos que todavía no tienen inspección. */
   static async listPending(tenantId: string): Promise<ReceivedDevice[]> {
     const { rows } = await pool.query(
-      `SELECT r.tenant_id, r.order_id, r.device_type_id, r.device_type_name, r.received_at, r.received_by_user
+      `SELECT r.tenant_id, r.order_id, r.quote_id, r.device_type_id, r.device_type_name, r.received_at, r.received_by_user
        FROM received_devices r
        LEFT JOIN inspections i ON i.tenant_id = r.tenant_id AND i.order_id = r.order_id
        WHERE r.tenant_id = $1 AND i.id IS NULL

@@ -8,6 +8,7 @@ export function validateDeviceReceivedEvent(event: DomainEvent<DeviceReceivedPay
     throw new Error('Evento DeviceReceived inválido.');
   }
   if (
+    (payload.quote_id != null && !UUID_PATTERN.test(payload.quote_id)) ||
     typeof payload.device_type_name !== 'string' || !payload.device_type_name.trim() ||
     typeof payload.received_at !== 'string' || Number.isNaN(new Date(payload.received_at).getTime()) ||
     (payload.received_by_user_id != null && !UUID_PATTERN.test(String(payload.received_by_user_id)))

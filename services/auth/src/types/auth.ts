@@ -23,6 +23,7 @@ export interface User {
   password_hash: string;
   name: string;
   phone?: string;
+  pickup_address?: string | null;
   role: TenantUserRole;
   is_active: boolean;
   created_at: Date;
@@ -75,8 +76,15 @@ export interface UserResponse {
   email: string;
   name: string;
   phone?: string;
+  pickup_address?: string | null;
   role: TenantUserRole;
   created_at: Date;
+}
+
+export interface UpdateClientProfileDTO {
+  name: string;
+  phone: string;
+  pickup_address: string;
 }
 
 export interface PlatformAdminResponse {

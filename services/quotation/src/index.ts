@@ -4,7 +4,8 @@ import cors from 'cors';
 import quotationRoutes from './routes/quotationRoutes';
 import { pool } from './config/db';
 import { dispatchPendingQuoteEvents } from './messaging/quoteOutbox';
-import { subscribeEvent } from './messaging/eventBus';
+import { closeRabbitConnection, subscribeEvent } from './messaging/eventBus';
+import { startInspectionCompletedConsumer } from './messaging/inspectionCompletedConsumer';
 import { QuotationService } from './services/quotationService';
 
 
@@ -42,7 +43,7 @@ const expiryTimer = setInterval(() => {
 }, 60_000);
 expiryTimer.unref();
 
-app.listen(PORT, async () => {
+const server = app.listen(PORT, async () => {
   console.log(`[Quotation Service] Running on port ${PORT}`);
   try {
     const res = await pool.query('SELECT NOW()');
@@ -54,6 +55,7 @@ app.listen(PORT, async () => {
     `);
     dispatchPendingQuoteEvents().catch((err) => console.error('[Quotation] Error inicial al despachar outbox:', err));
     QuotationService.expireOverdueQuotes().catch((err) => console.error('[Quotation] Error inicial al expirar cotizaciones:', err));
+    await startInspectionCompletedConsumer();
 
     subscribeEvent<{ user_id: string; email: string }>('quotation.user.registered.queue', 'auth.user.registered', pool, async (event) => {
       console.log('[Quotation Service] Evento procesado exitosamente por primera vez:', {
@@ -68,3 +70,14 @@ app.listen(PORT, async () => {
     console.error('[Quotation Service] DB connection failed:', err);
   }
 });
+
+async function shutdown(): Promise<void> {
+  clearInterval(outboxTimer);
+  clearInterval(expiryTimer);
+  server.close();
+  await closeRabbitConnection();
+  await pool.end();
+}
+
+process.on('SIGTERM', () => void shutdown());
+process.on('SIGINT', () => void shutdown());

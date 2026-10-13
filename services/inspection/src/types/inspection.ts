@@ -18,6 +18,7 @@ export interface DomainEvent<T> {
 // Publicado por Orders (HU-014).
 export interface DeviceReceivedPayload {
   order_id: string;
+  quote_id?: string;
   device_type_id: string;
   device_type_name: string;
   received_at: string;
@@ -41,6 +42,8 @@ export type InspectionResult = 'RESALE' | 'RECYCLE';
 export interface InspectionCompletedPayload {
   inspection_id: string;
   order_id: string;
+  quote_id: string | null;
+  actual_condition: string;
   result: InspectionResult;
   justification: string;
   completed_by_user_id: string;
@@ -90,6 +93,7 @@ export interface ValidatedInspection {
 export interface ReceivedDevice {
   tenant_id: string;
   order_id: string;
+  quote_id: string | null;
   device_type_id: string;
   device_type_name: string;
   received_at: Date;

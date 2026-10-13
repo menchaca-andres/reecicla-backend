@@ -60,6 +60,7 @@ export interface DomainEvent<T> {
 
 export interface DeviceReceivedPayload {
   order_id: string;
+  quote_id?: string;
   device_type_id: string;
   device_type_name: string;
   received_at: string;
@@ -69,6 +70,8 @@ export interface DeviceReceivedPayload {
 export interface InspectionCompletedPayload {
   inspection_id: string;
   order_id: string;
+  quote_id: string | null;
+  actual_condition: string;
   result: 'RESALE' | 'RECYCLE';
   justification: string;
   completed_by_user_id: string;

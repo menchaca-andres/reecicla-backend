@@ -200,7 +200,7 @@ export class OrderModel {
     if (!/^[0-9a-f]{64}$/i.test(token)) return null;
     const providedHash = trackingTokenHash(token);
     const result = await pool.query(
-      `SELECT o.order_number, o.device_type_name, o.brand, o.model,
+      `SELECT o.order_number, o.quote_id, o.device_type_name, o.brand, o.model,
               o.device_year, o.declared_condition, o.quoted_price, o.currency, o.status,
               o.accepted_at, o.created_at,
               o.tracking_token_hash, o.tracking_token_expires_at,
@@ -395,7 +395,7 @@ export class OrderModel {
       await client.query('BEGIN');
 
       const orderResult = await client.query(
-        `SELECT id, tenant_id, status, device_type_id, device_type_name, received_at
+        `SELECT id, tenant_id, status, quote_id, device_type_id, device_type_name, received_at
          FROM orders
          WHERE id = $1 AND tenant_id = $2
          FOR UPDATE`,
@@ -429,6 +429,7 @@ export class OrderModel {
 
       const payload = {
         order_id: orderId,
+        quote_id: order.quote_id,
         device_type_id: order.device_type_id,
         device_type_name: order.device_type_name,
         received_at: receivedAt.toISOString(),

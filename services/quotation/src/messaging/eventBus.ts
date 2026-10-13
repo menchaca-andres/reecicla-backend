@@ -123,3 +123,10 @@ export async function subscribeEvent<T>(
     }
   });
 }
+
+export async function closeRabbitConnection(): Promise<void> {
+  await activeChannel?.close();
+  await connection?.close();
+  activeChannel = null;
+  connection = null;
+}

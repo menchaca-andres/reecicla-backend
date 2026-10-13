@@ -120,7 +120,7 @@ export class QuotationController {
       const tenantId = gatewayTenantId(req);
       const userId = req.authUser?.userId ?? null;
       const customerName = String(req.body?.customer_name || req.authUser?.name || '').trim();
-      const customerEmail = String(req.body?.customer_email || req.authUser?.email || '').trim();
+      const customerEmail = String(userId ? req.authUser?.email : req.body?.customer_email || '').trim();
       const phone = String(req.body?.phone || '').trim();
       const address = String(req.body?.address || '').trim();
       const verificationCode = String(req.body?.verification_code || '').trim();
@@ -162,7 +162,8 @@ export class QuotationController {
       });
     } catch (error: any) {
       const message = error.message || 'No se pudo aceptar la cotización.';
-      const statusCode = error.status || (message === 'Cotización no encontrada.' ? 404 :
+      const statusCode = error.status || (message.includes('HU-018') ? 409 :
+        message === 'Cotización no encontrada.' ? 404 :
         message.includes('venció') ? 422 :
           message.includes('requerid') || message.includes('no es válido') ? 400 : 409);
       res.status(statusCode).json({ error: message });
@@ -185,7 +186,7 @@ export class QuotationController {
       res.status(200).json({ message: 'Cotización rechazada.', quote });
     } catch (error: any) {
       const message = error.message || 'No se pudo rechazar la cotización.';
-      const statusCode = message.includes('no está pendiente') ? 409 : 400;
+      const statusCode = message.includes('no está pendiente') || message.includes('HU-018') ? 409 : 400;
       res.status(statusCode).json({ error: message });
     }
   }

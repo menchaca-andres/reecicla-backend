@@ -2,6 +2,7 @@ import express, { RequestHandler } from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
 import proxy from 'express-http-proxy';
+import { assertTenantToken, isValidTenantSlug, TenantTokenError } from './tenantSecurity';
 
 dotenv.config();
 
@@ -32,10 +33,13 @@ app.get('/health', (_req, res) => {
 const QUOTE_RATE_LIMIT = Number(process.env.QUOTE_RATE_LIMIT_PER_MINUTE || 10);
 const EMAIL_VERIFICATION_RATE_LIMIT = Number(process.env.EMAIL_VERIFICATION_RATE_LIMIT_PER_MINUTE || 5);
 const quoteHits = new Map<string, number[]>();
+const registrationHits = new Map<string, number[]>();
 const quoteRateLimitCleanup = setInterval(() => {
   const cutoff = Date.now() - 60_000;
-  for (const [ip, timestamps] of quoteHits) {
-    if (timestamps.every((timestamp) => timestamp <= cutoff)) quoteHits.delete(ip);
+  for (const hits of [quoteHits, registrationHits]) {
+    for (const [key, timestamps] of hits) {
+      if (timestamps.every((timestamp) => timestamp <= cutoff)) hits.delete(key);
+    }
   }
 }, 60_000);
 quoteRateLimitCleanup.unref();
@@ -68,10 +72,52 @@ const quoteCreateRateLimit: RequestHandler = (req, res, next) => {
   next();
 };
 
+const registrationRateLimit: RequestHandler = (req, res, next) => {
+  if (req.method !== 'POST') {
+    next();
+    return;
+  }
+  const route = req.path === '/register'
+    ? 'request'
+    : req.path === '/register/verify'
+      ? 'verify'
+      : null;
+  if (!route) {
+    next();
+    return;
+  }
+
+  const ip = req.socket.remoteAddress || 'unknown';
+  const slug = req.params.slug;
+  const now = Date.now();
+  const buckets = [
+    { key: `${route}:ip:${ip}`, limit: route === 'request' ? 3 : 10 },
+    { key: `${route}:tenant:${slug}`, limit: route === 'request' ? 20 : 60 },
+  ];
+  const recentHits = buckets.map((bucket) => ({
+    ...bucket,
+    recent: (registrationHits.get(bucket.key) ?? [])
+      .filter((timestamp) => now - timestamp < 60_000),
+  }));
+  for (const bucket of recentHits) {
+    if (bucket.recent.length >= bucket.limit) {
+      res.setHeader('Retry-After', '60');
+      res.status(429).json({ error: 'Demasiadas solicitudes de registro. Inténtalo de nuevo en un minuto.' });
+      return;
+    }
+  }
+  for (const bucket of recentHits) {
+    bucket.recent.push(now);
+    registrationHits.set(bucket.key, bucket.recent);
+  }
+  next();
+};
+
 const slugCache = new Map<string, { tenantId: string; expiresAt: number }>();
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
 async function resolveTenantSlug(slug: string): Promise<string | null> {
+  if (!isValidTenantSlug(slug)) return null;
   const cached = slugCache.get(slug);
   if (cached && cached.expiresAt > Date.now()) return cached.tenantId;
 
@@ -87,7 +133,11 @@ async function resolveTenantSlug(slug: string): Promise<string | null> {
   return data.tenant_id;
 }
 
-function tenantScopedProxy(targetUrl: string, apiPrefix: string): RequestHandler[] {
+function tenantScopedProxy(
+  targetUrl: string,
+  apiPrefix: string,
+  limitRegistrations = false
+): RequestHandler[] {
   const resolve: RequestHandler = async (req, res, next) => {
     try {
       const tenantId = await resolveTenantSlug(req.params.slug);
@@ -96,16 +146,28 @@ function tenantScopedProxy(targetUrl: string, apiPrefix: string): RequestHandler
         return;
       }
       req.headers['x-tenant-id'] = tenantId;
+      const secret = process.env.JWT_SECRET;
+      if (!secret) throw new Error('JWT_SECRET debe estar configurado en API Gateway.');
+      assertTenantToken(req.header('authorization'), tenantId, secret);
       next();
     } catch (error) {
+      if (error instanceof TenantTokenError) {
+        res.status(error.statusCode).json({ error: error.message });
+        return;
+      }
+      if (error instanceof Error && error.message.includes('JWT_SECRET')) {
+        console.error('[Gateway] Falta configurar JWT_SECRET:', error);
+        res.status(500).json({ error: 'La autenticación no está configurada correctamente.' });
+        return;
+      }
       console.error('[Gateway] No se pudo resolver el negocio:', error);
       res.status(502).json({ error: 'No fue posible resolver el negocio.' });
     }
   };
 
-  return [
-    resolve,
-    proxy(targetUrl, {
+  const handlers: RequestHandler[] = [resolve];
+  if (limitRegistrations) handlers.push(registrationRateLimit);
+  handlers.push(proxy(targetUrl, {
       parseReqBody: false,
       proxyReqPathResolver: (req) => `${apiPrefix}${req.url}`,
       proxyReqOptDecorator: (proxyReqOpts, srcReq) => {
@@ -113,19 +175,19 @@ function tenantScopedProxy(targetUrl: string, apiPrefix: string): RequestHandler
         proxyReqOpts.headers['x-tenant-id'] = srcReq.headers['x-tenant-id'] as string;
         return proxyReqOpts;
       },
-    }),
-  ];
+    }));
+  return handlers;
 }
 
 app.use('/recicla/:slug/quotation', quoteCreateRateLimit, ...tenantScopedProxy(QUOTATION_SERVICE_URL, '/api/quotation'));
 app.use('/recicla/:slug/catalog', ...tenantScopedProxy(CATALOG_SERVICE_URL, '/api/catalog'));
-app.use('/recicla/:slug/auth', ...tenantScopedProxy(AUTH_SERVICE_URL, '/api/auth'));
+app.use('/recicla/:slug/auth', ...tenantScopedProxy(AUTH_SERVICE_URL, '/api/auth', true));
 app.use('/recicla/:slug/orders', ...tenantScopedProxy(ORDERS_SERVICE_URL, '/api/orders'));
 app.use('/recicla/:slug/inspections', ...tenantScopedProxy(INSPECTION_SERVICE_URL, '/api/inspections'));
 
 app.use('/recicla/:slug/api/quotation', quoteCreateRateLimit, ...tenantScopedProxy(QUOTATION_SERVICE_URL, '/api/quotation'));
 app.use('/recicla/:slug/api/catalog', ...tenantScopedProxy(CATALOG_SERVICE_URL, '/api/catalog'));
-app.use('/recicla/:slug/api/auth', ...tenantScopedProxy(AUTH_SERVICE_URL, '/api/auth'));
+app.use('/recicla/:slug/api/auth', ...tenantScopedProxy(AUTH_SERVICE_URL, '/api/auth', true));
 app.use('/recicla/:slug/api/orders', ...tenantScopedProxy(ORDERS_SERVICE_URL, '/api/orders'));
 app.use('/recicla/:slug/api/inspections', ...tenantScopedProxy(INSPECTION_SERVICE_URL, '/api/inspections'));
 

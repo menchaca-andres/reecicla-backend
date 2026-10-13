@@ -1,8 +1,136 @@
 import { pool } from '../config/db';
-import { Quote, CreateQuoteDTO } from '../types/quotation';
+import { DomainEvent, InspectionCompletedPayload, Quote, CreateQuoteDTO } from '../types/quotation';
 import { randomUUID } from 'crypto';
+import {
+  buildAdjustmentJustification,
+  calculateAdjustedPrice,
+} from '../domain/inspectionCompleted';
 
 export class QuoteModel {
+  static async applyInspectionCompleted(
+    event: DomainEvent<InspectionCompletedPayload>
+  ): Promise<void> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const processed = await client.query(
+        `INSERT INTO processed_events (event_id, event_type, tenant_id)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (event_id) DO NOTHING
+         RETURNING event_id`,
+        [event.event_id, event.event_type, event.tenant_id]
+      );
+      if (processed.rowCount === 0) {
+        await client.query('COMMIT');
+        return;
+      }
+
+      const originalResult = await client.query<Quote & {
+        condition_adjust: Record<string, number | string>;
+      }>(
+        `SELECT q.*, q.device_type_name AS device_type, r.condition_adjust
+         FROM quotes q
+         JOIN pricing_rules r ON r.id = q.pricing_rule_id
+         WHERE q.id = $1 AND q.tenant_id = $2
+         FOR UPDATE OF q`,
+        [event.payload.quote_id, event.tenant_id]
+      );
+      const original = originalResult.rows[0];
+      if (!original || original.quote_type !== 'INITIAL' || original.status !== 'ACCEPTED') {
+        throw new Error('No se encontró la cotización original aceptada para la inspección.');
+      }
+      const declaredCondition = original.condition.trim();
+      const actualCondition = event.payload.actual_condition.trim();
+      const originalPrice = Number(original.final_price);
+      const justification = declaredCondition.toLowerCase() === actualCondition.toLowerCase()
+        ? `La condición real (${actualCondition}) coincide con la condición declarada; se confirma la cotización original.`
+        : buildAdjustmentJustification(declaredCondition, actualCondition);
+
+      let adjustedQuoteId: string | null = null;
+      let adjustedPrice = originalPrice;
+      const changed = declaredCondition.toLowerCase() !== actualCondition.toLowerCase();
+      if (changed) {
+        const adjusted = calculateAdjustedPrice(
+          Number(original.base_price),
+          original.condition_adjust ?? {},
+          actualCondition
+        );
+        adjustedPrice = adjusted.finalPrice;
+        const created = await client.query<{ id: string }>(
+          `INSERT INTO quotes (
+             tenant_id, user_id, pricing_rule_id, device_type_id, device_type_name,
+             brand, model, year, condition, base_price, adjustment, final_price,
+             currency, quote_type, parent_quote_id, adjustment_reason, valid_until, status
+           ) VALUES (
+             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+             $13, 'ADJUSTED', $14, $15, NOW() + INTERVAL '30 days', 'PENDING'
+           )
+           ON CONFLICT (tenant_id, parent_quote_id) WHERE quote_type = 'ADJUSTED'
+           DO NOTHING
+           RETURNING id`,
+          [
+            event.tenant_id,
+            original.user_id,
+            original.pricing_rule_id,
+            original.device_type_id,
+            original.device_type_name,
+            original.brand ?? null,
+            original.model ?? null,
+            original.year ?? null,
+            actualCondition,
+            original.base_price,
+            adjusted.adjustment,
+            adjusted.finalPrice,
+            original.currency,
+            original.id,
+            justification,
+          ]
+        );
+        if (created.rows[0]) {
+          adjustedQuoteId = created.rows[0].id;
+        } else {
+          const existing = await client.query<{ id: string; final_price: number | string }>(
+            `SELECT id, final_price FROM quotes
+             WHERE tenant_id = $1 AND parent_quote_id = $2 AND quote_type = 'ADJUSTED'`,
+            [event.tenant_id, original.id]
+          );
+          adjustedQuoteId = existing.rows[0]?.id ?? null;
+          if (!existing.rows[0]) throw new Error('No se pudo recuperar la cotización ajustada existente.');
+          adjustedPrice = Number(existing.rows[0].final_price);
+        }
+      }
+
+      await client.query(
+        `INSERT INTO quote_adjustment_audits (
+           event_id, tenant_id, order_id, original_quote_id, adjusted_quote_id,
+           declared_condition, actual_condition, inspection_result,
+           original_price, adjusted_price, outcome, justification
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         ON CONFLICT (tenant_id, order_id) DO NOTHING`,
+        [
+          event.event_id,
+          event.tenant_id,
+          event.payload.order_id,
+          original.id,
+          adjustedQuoteId,
+          declaredCondition,
+          actualCondition,
+          event.payload.result,
+          originalPrice,
+          adjustedPrice,
+          changed ? 'ADJUSTED' : 'UNCHANGED',
+          justification,
+        ]
+      );
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   static async createQuote(
     dto: CreateQuoteDTO,
     basePrice: number,
@@ -68,6 +196,9 @@ export class QuoteModel {
       if (!quote) throw new Error('Cotización no encontrada.');
       if (quote.status !== 'PENDING' && quote.status !== 'ANONYMOUS') {
         throw new Error('La cotización ya no está pendiente.');
+      }
+      if (quote.quote_type === 'ADJUSTED') {
+        throw new Error('La aceptación de cotizaciones ajustadas se implementa en HU-018.');
       }
 
       if (new Date(quote.valid_until).getTime() <= Date.now()) {
@@ -140,21 +271,51 @@ export class QuoteModel {
   }
 
   static async rejectQuote(quoteId: string, tenantId: string): Promise<Quote> {
+    const quoteType = await pool.query<{ quote_type: string }>(
+      'SELECT quote_type FROM quotes WHERE id = $1 AND tenant_id = $2',
+      [quoteId, tenantId]
+    );
+    if (quoteType.rows[0]?.quote_type === 'ADJUSTED') {
+      throw new Error('El rechazo de cotizaciones ajustadas se implementa en HU-018.');
+    }
     const { rows } = await pool.query<Quote>(
       `UPDATE quotes
        SET status = 'REJECTED'
-       WHERE id = $1 AND tenant_id = $2 AND status IN ('ANONYMOUS', 'PENDING')
+       WHERE id = $1 AND tenant_id = $2 AND quote_type = 'INITIAL'
+         AND status IN ('ANONYMOUS', 'PENDING')
        RETURNING *, device_type_name AS device_type`,
       [quoteId, tenantId]
     );
-    if (!rows[0]) throw new Error('La cotización no está pendiente o no existe.');
+    if (!rows[0]) throw new Error('La cotización inicial no está pendiente o no existe.');
     return rows[0];
   }
 
   static async findById(id: string): Promise<Quote | null> {
     const query = `SELECT *, device_type_name AS device_type FROM quotes WHERE id = $1;`;
     const { rows } = await pool.query(query, [id]);
-    return rows[0] || null;
+    const quote: Quote | undefined = rows[0];
+    if (!quote) return null;
+    if (quote.quote_type === 'INITIAL') {
+      const adjusted = await pool.query(
+        `SELECT *, device_type_name AS device_type
+         FROM quotes
+         WHERE tenant_id = $1 AND parent_quote_id = $2 AND quote_type = 'ADJUSTED'
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [quote.tenant_id, quote.id]
+      );
+      quote.adjusted_quote = adjusted.rows[0] ?? null;
+      const audit = await pool.query<NonNullable<Quote['adjustment_audit']>>(
+        `SELECT outcome, declared_condition, actual_condition, justification
+         FROM quote_adjustment_audits
+         WHERE tenant_id = $1 AND original_quote_id = $2
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [quote.tenant_id, quote.id]
+      );
+      quote.adjustment_audit = audit.rows[0] ?? null;
+    }
+    return quote;
   }
 
   static async findByUserId(tenantId: string, userId: string): Promise<Quote[]> {
@@ -163,7 +324,24 @@ export class QuoteModel {
       WHERE tenant_id = $1 AND user_id = $2
       ORDER BY created_at DESC;
     `;
-    const { rows } = await pool.query(query, [tenantId, userId]);
+    const { rows } = await pool.query<Quote>(query, [tenantId, userId]);
+    const originalIds = rows
+      .filter((quote) => quote.quote_type === 'INITIAL')
+      .map((quote) => quote.id);
+    if (originalIds.length > 0) {
+      const audits = await pool.query<NonNullable<Quote['adjustment_audit']> & { original_quote_id: string }>(
+        `SELECT DISTINCT ON (original_quote_id)
+           original_quote_id, outcome, declared_condition, actual_condition, justification
+         FROM quote_adjustment_audits
+         WHERE tenant_id = $1 AND original_quote_id = ANY($2::uuid[])
+         ORDER BY original_quote_id, created_at DESC`,
+        [tenantId, originalIds]
+      );
+      const auditsByQuote = new Map(audits.rows.map((audit) => [audit.original_quote_id, audit]));
+      for (const quote of rows) {
+        quote.adjustment_audit = auditsByQuote.get(quote.id) ?? null;
+      }
+    }
     return rows;
   }
 }
