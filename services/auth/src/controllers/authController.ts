@@ -34,15 +34,66 @@ export class AuthController {
   static async register(req: Request, res: Response): Promise<void> {
     try {
       const tenant_id = req.header('x-tenant-id')?.trim();
-      const { email, password, name, phone } = req.body;
-      if (!tenant_id || !email || !password) {
+      const { email, password, name, phone } = req.body ?? {};
+      if (
+        !tenant_id ||
+        typeof email !== 'string' ||
+        typeof password !== 'string'
+      ) {
         res.status(400).json({ error: 'email, password y el contexto del negocio son requeridos.' });
         return;
       }
-      const result = await AuthService.register({ tenant_id, email, password, name, phone });
-      res.status(201).json({ message: 'Usuario cliente registrado exitosamente.', ...result });
+      await AuthService.register({ tenant_id, email, password, name, phone });
+      res.status(202).json({
+        verification_required: true,
+        message: 'Si puedes crear una cuenta con ese correo, recibirás un código de verificación.',
+      });
     } catch (error: any) {
-      res.status(400).json({ error: error.message || 'Error al registrar el usuario.' });
+      const message = error.message || 'Error al iniciar el registro.';
+      if (message.includes('Espera un minuto')) {
+        res.status(429).json({ error: message });
+        return;
+      }
+      if (
+        message.includes('SMTP_') ||
+        message.includes('verificar correos') ||
+        error.code === '42P01' ||
+        String(error.code || '').startsWith('08')
+      ) {
+        console.error('[AuthController.register] No se pudo iniciar el registro:', error);
+        res.status(503).json({ error: 'No se pudo iniciar el registro en este momento.' });
+        return;
+      }
+      res.status(400).json({ error: message });
+    }
+  }
+
+  static async verifyRegistration(req: Request, res: Response): Promise<void> {
+    try {
+      const tenant_id = req.header('x-tenant-id')?.trim();
+      const { email, code } = req.body ?? {};
+      if (!tenant_id || typeof email !== 'string' || typeof code !== 'string') {
+        res.status(400).json({ error: 'Correo, código y contexto del negocio son requeridos.' });
+        return;
+      }
+      const result = await AuthService.verifyClientRegistration(tenant_id, email, code);
+      res.status(201).json({ message: 'Cuenta verificada y creada exitosamente.', ...result });
+    } catch (error: any) {
+      if (error.code === '23505') {
+        res.status(409).json({ error: 'Ya existe una cuenta con ese correo en este negocio.' });
+        return;
+      }
+      const message = error.message || 'No se pudo verificar el correo.';
+      if (message.includes('inválido o venció')) {
+        res.status(422).json({ error: message });
+        return;
+      }
+      if (error.code === '42P01' || String(error.code || '').startsWith('08')) {
+        console.error('[AuthController.verifyRegistration] No se pudo verificar el registro:', error);
+        res.status(503).json({ error: 'No se pudo verificar el registro en este momento.' });
+        return;
+      }
+      res.status(400).json({ error: message });
     }
   }
 
@@ -227,10 +278,48 @@ export class AuthController {
         res.status(401).json({ error: 'Usuario no autenticado.' });
         return;
       }
-      const user = await AuthService.getUserProfile(req.authUser.userId);
+      if (!req.authUser.tenantId) {
+        res.status(403).json({ error: 'La sesión no pertenece a un negocio.' });
+        return;
+      }
+      const user = await AuthService.getUserProfile(req.authUser.userId, req.authUser.tenantId);
       res.status(200).json({ user });
     } catch (error: any) {
       res.status(404).json({ error: error.message || 'Error al obtener el perfil.' });
+    }
+  }
+
+  static async updateProfile(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const authUser = req.authUser;
+      if (!authUser?.tenantId) {
+        res.status(403).json({ error: 'La sesión no pertenece a un negocio.' });
+        return;
+      }
+      const { name, phone, pickup_address } = req.body ?? {};
+      if (
+        typeof name !== 'string' ||
+        typeof phone !== 'string' ||
+        typeof pickup_address !== 'string'
+      ) {
+        res.status(400).json({ error: 'Nombre, teléfono y dirección son requeridos.' });
+        return;
+      }
+      const user = await AuthService.updateUserProfile(authUser.userId, authUser.tenantId, {
+        name,
+        phone,
+        pickup_address,
+      });
+      res.status(200).json({ message: 'Datos de contacto actualizados.', user });
+    } catch (error: any) {
+      if (error.code === '42703' || error.code === '42P01') {
+        console.error('[AuthController.updateProfile] La base Auth requiere una migración:', error);
+        res.status(503).json({ error: 'La base de datos necesita actualizarse antes de guardar los datos de contacto.' });
+        return;
+      }
+      const message = error.message || 'No se pudo actualizar el perfil.';
+      const statusCode = message.includes('no encontrado') ? 404 : 400;
+      res.status(statusCode).json({ error: message });
     }
   }
 }
