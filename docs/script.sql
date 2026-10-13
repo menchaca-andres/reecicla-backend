@@ -372,45 +372,82 @@ CREATE TABLE dispositions (
 -- ============================================================
 -- [CAMBIO] Base propia (como define el documento base).
 -- Se quitó la FK a orders: order_id es referencia lógica al Orders DB.
--- Una orden puede registrar inspecciones/reinspecciones; la regla usada
--- queda identificada mediante evaluation_rule_id.
+-- [CAMBIO HU-015] Versión implementada en
+-- services/inspection/db/01-inspection-migration.sql (fuente de verdad;
+-- incluye además processed_events y domain_event_outbox).
+-- Una inspección por orden; la reinspección queda fuera de HU-015.
+
+-- [NUEVO HU-015] Equipos recibidos en almacén. Se alimenta del evento
+-- DeviceReceived: Inspection no consulta la base de Orders.
+CREATE TABLE received_devices (
+    tenant_id UUID NOT NULL,
+    order_id UUID NOT NULL, -- ID externo del Orders DB
+    device_type_id UUID NOT NULL, -- ID externo del Catalog DB
+    device_type_name VARCHAR(120) NOT NULL, -- snapshot
+    received_at TIMESTAMPTZ NOT NULL,
+    received_by_user UUID, -- ID externo del Auth DB
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT pk_received_devices PRIMARY KEY (tenant_id, order_id)
+);
 
 CREATE TABLE inspections (
-    id UUID PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL,
     order_id UUID NOT NULL, -- ID externo del Orders DB
     device_type_id UUID NOT NULL, -- ID externo del Catalog DB
     evaluation_rule_id UUID NOT NULL, -- ID externo del Catalog DB
-    -- [CAMBIO] Mismo vocabulario que dispositions.type.
-    result VARCHAR(30) NOT NULL,
-    actual_condition VARCHAR(50),
+    -- [NUEVO HU-015] Versión de la checklist usada.
+    evaluation_rule_version INTEGER NOT NULL,
+    -- [NUEVO HU-015] REGISTERED (HU-015) -> COMPLETED (HU-016).
+    status VARCHAR(20) NOT NULL DEFAULT 'REGISTERED',
+    -- [CAMBIO HU-015] Nullable: el resultado lo determina HU-016.
+    result VARCHAR(30),
+    -- [CAMBIO HU-015] Obligatoria: working / damaged / broken.
+    actual_condition VARCHAR(50) NOT NULL,
     observations TEXT,
-    inspected_by_user UUID, -- ID externo del Auth DB
+    -- [NUEVO HU-015] Referencias de evidencia (URL o código de foto).
+    evidence_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+    inspected_by_user UUID NOT NULL, -- ID externo del Auth DB
     inspected_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT fk_inspections_received_device
+        FOREIGN KEY (tenant_id, order_id)
+        REFERENCES received_devices (tenant_id, order_id),
+    CONSTRAINT uq_inspections_tenant_order UNIQUE (tenant_id, order_id),
+    CONSTRAINT ck_inspections_status
+        CHECK (status IN ('REGISTERED', 'COMPLETED')),
     CONSTRAINT ck_inspections_result
-        CHECK (result IN ('RESALE', 'RECYCLE'))
+        CHECK (result IS NULL OR result IN ('RESALE', 'RECYCLE')),
+    CONSTRAINT ck_inspections_rule_version
+        CHECK (evaluation_rule_version > 0)
 );
 
-CREATE INDEX idx_inspections_order ON inspections (tenant_id, order_id);
+CREATE INDEX idx_inspections_tenant_inspected
+    ON inspections (tenant_id, inspected_at);
 
 CREATE TABLE inspection_items (
-    id UUID PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     inspection_id UUID NOT NULL,
     criterion_key VARCHAR(100) NOT NULL,
-    criterion_label VARCHAR(255) NOT NULL,
-    result VARCHAR(30) NOT NULL,
+    criterion_label VARCHAR(255) NOT NULL, -- snapshot de la checklist
+    -- [NUEVO HU-015] Tipo y valor respondido: la checklist de HU-008
+    -- admite boolean, number, text y select.
+    criterion_type VARCHAR(20) NOT NULL,
+    value JSONB NOT NULL,
+    -- [CAMBIO HU-015] Nullable: PASS/FAIL solo aplica a criterios boolean.
+    result VARCHAR(30),
     observation TEXT,
+    evidence_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT fk_inspection_items_inspection
         FOREIGN KEY (inspection_id) REFERENCES inspections(id) ON DELETE CASCADE,
+    CONSTRAINT uq_inspection_items_criterion UNIQUE (inspection_id, criterion_key),
+    CONSTRAINT ck_inspection_items_type
+        CHECK (criterion_type IN ('boolean', 'number', 'text', 'select')),
     CONSTRAINT ck_inspection_items_result
-        CHECK (result IN ('PASS', 'FAIL', 'NOT_APPLICABLE'))
+        CHECK (result IS NULL OR result IN ('PASS', 'FAIL', 'NOT_APPLICABLE'))
 );
-
-CREATE INDEX idx_inspection_items_inspection
-    ON inspection_items (inspection_id);
 
 
 -- ============================================================
