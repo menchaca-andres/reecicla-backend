@@ -12,6 +12,7 @@ router.post('/quotes', authenticateOptionalToken, QuotationController.createQuot
 router.get('/quotes/user', authenticateToken, QuotationController.getUserQuotes);
 router.post('/quotes/:id/accept', authenticateOptionalToken, QuotationController.acceptQuote);
 router.post('/quotes/:id/reject', authenticateOptionalToken, QuotationController.rejectQuote);
+router.post('/quotes/:id/adjusted-response', authenticateOptionalToken, QuotationController.respondToAdjustedQuote);
 router.get('/quotes/:id', QuotationController.getQuote);
 
 export default router;

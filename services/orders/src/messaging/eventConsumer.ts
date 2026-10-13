@@ -1,8 +1,14 @@
 import amqp, { ChannelModel, Channel, ConsumeMessage } from 'amqplib';
 import { OrderModel } from '../models/orderModel';
-import { DomainEvent, InspectionCompletedPayload, QuoteAcceptedPayload } from '../types/orders';
+import {
+  AdjustedQuoteEventPayload,
+  DomainEvent,
+  InspectionCompletedPayload,
+  QuoteAcceptedPayload,
+} from '../types/orders';
 import { validateInspectionCompletedEvent } from '../domain/inspectionCompleted';
 import { validateQuoteAcceptedEvent } from '../domain/quoteAccepted';
+import { validateAdjustedQuoteEvent } from '../domain/adjustedQuoteEvent';
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://reecicla:reecicla_password@localhost:5672';
 const EXCHANGE = 'reecicla.events';
@@ -22,6 +28,9 @@ async function connect(): Promise<Channel> {
       await channel.assertExchange(EXCHANGE, 'topic', { durable: true });
       await channel.assertQueue(QUEUE, { durable: true });
       await channel.bindQueue(QUEUE, EXCHANGE, 'quote.accepted');
+      await channel.bindQueue(QUEUE, EXCHANGE, 'quote.adjusted.created');
+      await channel.bindQueue(QUEUE, EXCHANGE, 'quote.adjusted.accepted');
+      await channel.bindQueue(QUEUE, EXCHANGE, 'quote.adjusted.rejected');
       await channel.prefetch(1);
       return channel;
     } catch (error) {
@@ -38,20 +47,47 @@ export async function startQuoteAcceptedConsumer(): Promise<void> {
   await activeChannel.consume(QUEUE, async (message: ConsumeMessage | null) => {
     if (!message) return;
     try {
-      const event = JSON.parse(message.content.toString()) as DomainEvent<QuoteAcceptedPayload>;
+      const event = JSON.parse(message.content.toString()) as DomainEvent<unknown>;
       if (!event.event_id || !event.correlation_id || !event.tenant_id || !event.payload) {
         console.error('[Orders] Evento inválido descartado.');
         activeChannel.ack(message);
         return;
       }
+      if (typeof event.event_type === 'string' && event.event_type.startsWith('AdjustedQuote')) {
+        const adjustedEvent: DomainEvent<AdjustedQuoteEventPayload> = {
+          ...event,
+          payload: event.payload as AdjustedQuoteEventPayload,
+        };
+        try {
+          validateAdjustedQuoteEvent(adjustedEvent);
+        } catch (validationError) {
+          console.error('[Orders] Evento de cotización ajustada inválido descartado:', validationError);
+          activeChannel.ack(message);
+          return;
+        }
+        try {
+          await OrderModel.processAdjustedQuoteEvent(adjustedEvent);
+          activeChannel.ack(message);
+        } catch (error) {
+          console.error('[Orders] Error procesando evento de cotización ajustada; se reintentará:', error);
+          activeChannel.nack(message, false, true);
+        }
+        return;
+      }
       try {
-        validateQuoteAcceptedEvent(event);
+        validateQuoteAcceptedEvent({
+          ...event,
+          payload: event.payload as QuoteAcceptedPayload,
+        });
       } catch (validationError) {
         console.error('[Orders] Evento QuoteAccepted inválido descartado:', validationError);
         activeChannel.ack(message);
         return;
       }
-      await OrderModel.createFromAcceptedQuote(event);
+      await OrderModel.createFromAcceptedQuote({
+        ...event,
+        payload: event.payload as QuoteAcceptedPayload,
+      });
       activeChannel.ack(message);
     } catch (error) {
       console.error('[Orders] Error procesando QuoteAccepted; se reintentará:', error);

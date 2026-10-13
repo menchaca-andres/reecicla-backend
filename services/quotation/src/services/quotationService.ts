@@ -247,6 +247,68 @@ export class QuotationService {
     return QuoteModel.rejectQuote(quoteId, tenantId);
   }
 
+  static async respondToAdjustedQuote(input: {
+    quoteId: string;
+    tenantId: string;
+    userId: string | null;
+    decision: 'ACCEPT' | 'REJECT';
+    trackingToken?: string;
+  }): Promise<Quote> {
+    const quote = await QuoteModel.findById(input.quoteId);
+    if (!quote || quote.tenant_id !== input.tenantId || quote.quote_type !== 'ADJUSTED') {
+      throw new Error('Cotización ajustada no encontrada.');
+    }
+    if (quote.status !== 'PENDING') {
+      throw new Error('La cotización ajustada ya no está pendiente.');
+    }
+
+    let authorizedOrderId: string | null = null;
+    if (!input.userId) {
+      const token = input.trackingToken?.trim();
+      const serviceToken = process.env.INTERNAL_SERVICE_TOKEN;
+      if (!token || !serviceToken) {
+        throw new Error('Se requiere iniciar sesión o presentar un enlace de seguimiento válido.');
+      }
+      const serviceUrl = process.env.ORDERS_SERVICE_URL || 'http://orders-service:3004';
+      let response: Response;
+      try {
+        response = await fetch(new URL('/api/orders/internal/adjusted-quote/authorize', serviceUrl), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-internal-service-token': serviceToken,
+          },
+          body: JSON.stringify({
+            tracking_token: token,
+            parent_quote_id: quote.parent_quote_id,
+          }),
+        });
+      } catch (error) {
+        console.error('[Quotation] No se pudo contactar Orders para verificar el token de seguimiento:', error);
+        throw new Error('No se pudo validar el enlace de seguimiento. Intenta de nuevo más tarde.');
+      }
+      const result = await response.json().catch(() => ({})) as {
+        order?: { id?: string; tenant_id?: string };
+        error?: string;
+      };
+      if (response.status >= 500) {
+        throw new Error('No se pudo validar el enlace de seguimiento. Intenta de nuevo más tarde.');
+      }
+      if (!response.ok || !result.order?.id || result.order.tenant_id !== input.tenantId) {
+        throw new Error(result.error || 'El enlace de seguimiento no autoriza esta respuesta.');
+      }
+      authorizedOrderId = result.order.id;
+    }
+
+    return QuoteModel.respondToAdjustedQuote(
+      input.quoteId,
+      input.tenantId,
+      input.userId,
+      input.decision,
+      authorizedOrderId
+    );
+  }
+
   static async acceptQuote(input: {
     quoteId: string;
     tenantId: string;

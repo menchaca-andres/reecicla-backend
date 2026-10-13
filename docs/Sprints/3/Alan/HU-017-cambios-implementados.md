@@ -9,7 +9,7 @@ Quotation consume el evento de forma idempotente:
 - Si la condición real difiere de la declarada, crea una cotización `ADJUSTED` pendiente, vinculada con `parent_quote_id`, usando la regla de precios guardada en la cotización original. Registra las condiciones, importes, resultado y justificación en `quote_adjustment_audits`.
 - Si la condición coincide, conserva la cotización original aceptada y registra `UNCHANGED` en la auditoría.
 
-La cotización ajustada y su justificación se presentan en el seguimiento del pedido y en el historial del cliente. Los endpoints de aceptación y rechazo de cotizaciones iniciales no procesan cotizaciones `ADJUSTED`; la respuesta a ese ajuste queda para HU-018.
+La cotización ajustada y su justificación se presentan en el seguimiento del pedido y en el historial del cliente. Los endpoints de aceptación y rechazo de cotizaciones iniciales no procesan cotizaciones `ADJUSTED`; HU-018 implementa la respuesta y el flujo posterior al rechazo.
 
 ## Migraciones
 

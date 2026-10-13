@@ -94,6 +94,24 @@ export interface InspectionCompletedPayload {
   completed_at: string;
 }
 
+export interface AdjustedQuoteDecisionPayload {
+  order_id: string;
+  quote_id: string;
+  parent_quote_id: string;
+  adjusted_price: number;
+  currency: string;
+  responded_by_user_id: string | null;
+  responded_at: string;
+}
+
+export interface AdjustedQuoteCreatedPayload {
+  order_id: string;
+  quote_id: string;
+  parent_quote_id: string;
+  adjusted_price: number;
+  currency: string;
+}
+
 export interface DomainEvent<T> {
   event_id: string;
   correlation_id: string;
