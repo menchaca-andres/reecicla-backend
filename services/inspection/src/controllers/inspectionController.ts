@@ -81,6 +81,29 @@ export class InspectionController {
     }
   }
 
+  static async complete(req: AuthenticatedRequest, res: Response): Promise<void> {
+    if (!req.authUser) {
+      res.status(401).json({ error: 'Usuario no autenticado.' });
+      return;
+    }
+    try {
+      const inspection = await InspectionService.complete(
+        req.authUser.tenantId,
+        req.authUser.userId,
+        req.params.orderId,
+        req.body
+      );
+      try {
+        await dispatchPendingInspectionEvents();
+      } catch (error) {
+        console.error('[Inspection] Resultado guardado; InspectionCompleted permanece en outbox:', error);
+      }
+      res.status(200).json({ message: 'Resultado de inspección guardado correctamente.', inspection });
+    } catch (error) {
+      handleError(res, error, 'Error completando la inspección', 'No se pudo completar la inspección.');
+    }
+  }
+
   static async list(req: AuthenticatedRequest, res: Response): Promise<void> {
     if (!req.authUser) {
       res.status(401).json({ error: 'Usuario no autenticado.' });

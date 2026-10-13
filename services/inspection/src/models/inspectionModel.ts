@@ -2,8 +2,10 @@ import { pool } from '../config/db';
 import { DomainError } from '../domain/errors';
 import {
   Inspection,
+  InspectionCompletedPayload,
   InspectionItem,
   InspectionRegisteredPayload,
+  InspectionResult,
   ValidatedInspection,
 } from '../types/inspection';
 
@@ -20,6 +22,7 @@ export interface CreateInspectionInput {
 const INSPECTION_COLUMNS = `
   i.id, i.tenant_id, i.order_id, i.device_type_id, r.device_type_name,
   i.evaluation_rule_id, i.evaluation_rule_version, i.status, i.result,
+  i.result_justification, i.completed_by_user, i.completed_at,
   i.actual_condition, i.observations, i.evidence_refs, i.inspected_by_user,
   i.inspected_at, i.created_at, i.updated_at`;
 
@@ -127,6 +130,74 @@ export class InspectionModel {
     );
     inspection.items = items.rows;
     return inspection;
+  }
+
+  static async complete(
+    tenantId: string,
+    orderId: string,
+    inspectorUserId: string,
+    result: InspectionResult,
+    justification: string
+  ): Promise<Inspection> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const existing = await client.query(
+        `SELECT id, status, result, result_justification
+         FROM inspections
+         WHERE tenant_id = $1 AND order_id = $2
+         FOR UPDATE`,
+        [tenantId, orderId]
+      );
+      const inspection = existing.rows[0];
+      if (!inspection) {
+        throw new DomainError(404, 'La orden no tiene una inspección registrada.');
+      }
+      if (inspection.status === 'COMPLETED') {
+        if (inspection.result !== result || inspection.result_justification !== justification) {
+          throw new DomainError(409, 'La inspección ya fue completada con otro resultado.');
+        }
+        await client.query('COMMIT');
+      } else {
+        const updated = await client.query(
+          `UPDATE inspections
+           SET status = 'COMPLETED',
+               result = $1,
+               result_justification = $2,
+               completed_by_user = $3,
+               completed_at = NOW(),
+               updated_at = NOW()
+           WHERE id = $4
+           RETURNING completed_at`,
+          [result, justification, inspectorUserId, inspection.id]
+        );
+        const payload: InspectionCompletedPayload = {
+          inspection_id: inspection.id,
+          order_id: orderId,
+          result,
+          justification,
+          completed_by_user_id: inspectorUserId,
+          completed_at: updated.rows[0].completed_at.toISOString(),
+        };
+        await client.query(
+          `INSERT INTO domain_event_outbox (
+             tenant_id, aggregate_id, correlation_id, event_type, routing_key, payload
+           ) VALUES ($1, $2, $3, 'InspectionCompleted', 'inspection.completed', $4::jsonb)
+           ON CONFLICT (aggregate_id, event_type) DO NOTHING`,
+          [tenantId, inspection.id, orderId, JSON.stringify(payload)]
+        );
+        await client.query('COMMIT');
+      }
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    const completed = await InspectionModel.findByOrder(tenantId, orderId);
+    if (!completed) throw new Error('La inspección completada no pudo recuperarse.');
+    return completed;
   }
 
   static async listForTenant(tenantId: string): Promise<Inspection[]> {

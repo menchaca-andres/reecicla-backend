@@ -1,11 +1,13 @@
 import amqp, { ChannelModel, Channel, ConsumeMessage } from 'amqplib';
 import { OrderModel } from '../models/orderModel';
-import { DomainEvent, QuoteAcceptedPayload } from '../types/orders';
+import { DomainEvent, InspectionCompletedPayload, QuoteAcceptedPayload } from '../types/orders';
+import { validateInspectionCompletedEvent } from '../domain/inspectionCompleted';
 import { validateQuoteAcceptedEvent } from '../domain/quoteAccepted';
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://reecicla:reecicla_password@localhost:5672';
 const EXCHANGE = 'reecicla.events';
 const QUEUE = 'orders.quote-accepted.queue';
+const INSPECTION_COMPLETED_QUEUE = 'orders.inspection-completed.queue';
 
 let connection: ChannelModel | null = null;
 let channel: Channel | null = null;
@@ -57,6 +59,38 @@ export async function startQuoteAcceptedConsumer(): Promise<void> {
     }
   });
   console.log(`[Orders] Escuchando ${QUEUE} para quote.accepted.`);
+}
+
+export async function startInspectionCompletedConsumer(): Promise<void> {
+  const activeChannel = await connect();
+  await activeChannel.assertQueue(INSPECTION_COMPLETED_QUEUE, { durable: true });
+  await activeChannel.bindQueue(INSPECTION_COMPLETED_QUEUE, EXCHANGE, 'inspection.completed');
+  await activeChannel.consume(INSPECTION_COMPLETED_QUEUE, async (message: ConsumeMessage | null) => {
+    if (!message) return;
+    let event: DomainEvent<InspectionCompletedPayload>;
+    try {
+      event = JSON.parse(message.content.toString()) as DomainEvent<InspectionCompletedPayload>;
+    } catch (parseError) {
+      console.error('[Orders] Mensaje InspectionCompleted con JSON inválido descartado:', parseError);
+      activeChannel.ack(message);
+      return;
+    }
+    try {
+      validateInspectionCompletedEvent(event);
+    } catch (validationError) {
+      console.error('[Orders] Evento InspectionCompleted inválido descartado:', validationError);
+      activeChannel.ack(message);
+      return;
+    }
+    try {
+      await OrderModel.completeFromInspectionEvent(event);
+      activeChannel.ack(message);
+    } catch (error) {
+      console.error('[Orders] Error procesando InspectionCompleted; se reintentará:', error);
+      activeChannel.nack(message, false, true);
+    }
+  });
+  console.log(`[Orders] Escuchando ${INSPECTION_COMPLETED_QUEUE} para inspection.completed.`);
 }
 
 export async function closeQuoteAcceptedConsumer(): Promise<void> {

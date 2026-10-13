@@ -1,6 +1,7 @@
 import { getActiveEvaluationRule } from '../clients/catalogClient';
 import { validateInspectionInput } from '../domain/checklist';
 import { DomainError, UUID_PATTERN } from '../domain/errors';
+import { validateInspectionResult } from '../domain/inspectionResult';
 import { InspectionModel } from '../models/inspectionModel';
 import { ReceivedDeviceModel } from '../models/receivedDeviceModel';
 import { EvaluationRule, Inspection, ReceivedDevice } from '../types/inspection';
@@ -72,5 +73,24 @@ export class InspectionService {
       throw new DomainError(404, 'La orden no tiene una inspección registrada.');
     }
     return inspection;
+  }
+
+  static async complete(
+    tenantId: string,
+    inspectorUserId: string,
+    orderId: string,
+    body: unknown
+  ): Promise<Inspection> {
+    if (!UUID_PATTERN.test(orderId)) {
+      throw new DomainError(400, 'El identificador de la orden (order_id) es inválido.');
+    }
+    const data = validateInspectionResult(body);
+    return InspectionModel.complete(
+      tenantId,
+      orderId,
+      inspectorUserId,
+      data.result,
+      data.justification
+    );
   }
 }

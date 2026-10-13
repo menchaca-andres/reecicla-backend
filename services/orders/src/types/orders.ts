@@ -66,6 +66,15 @@ export interface DeviceReceivedPayload {
   received_by_user_id: string;
 }
 
+export interface InspectionCompletedPayload {
+  inspection_id: string;
+  order_id: string;
+  result: 'RESALE' | 'RECYCLE';
+  justification: string;
+  completed_by_user_id: string;
+  completed_at: string;
+}
+
 export type BoxRequestStatus = 'REQUESTED' | 'SHIPPED' | 'DELIVERED' | 'LOST' | 'CANCELLED';
 
 export interface BoxRequest {

@@ -3,7 +3,11 @@ import dotenv from 'dotenv';
 import cors from 'cors';
 import orderRoutes from './routes/orderRoutes';
 import { pool } from './config/db';
-import { closeQuoteAcceptedConsumer, startQuoteAcceptedConsumer } from './messaging/eventConsumer';
+import {
+  closeQuoteAcceptedConsumer,
+  startInspectionCompletedConsumer,
+  startQuoteAcceptedConsumer,
+} from './messaging/eventConsumer';
 import { closeEventPublisher, dispatchPendingOrderEvents } from './messaging/eventPublisher';
 
 dotenv.config();
@@ -27,6 +31,7 @@ const server = app.listen(PORT, async () => {
   try {
     await pool.query('SELECT NOW()');
     await startQuoteAcceptedConsumer();
+    await startInspectionCompletedConsumer();
     await dispatchPendingOrderEvents();
   } catch (error) {
     console.error('[Orders Service] No se pudo iniciar su conexión de datos/mensajería:', error);

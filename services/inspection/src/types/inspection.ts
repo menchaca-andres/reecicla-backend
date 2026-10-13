@@ -36,6 +36,17 @@ export interface InspectionRegisteredPayload {
   inspected_at: string;
 }
 
+export type InspectionResult = 'RESALE' | 'RECYCLE';
+
+export interface InspectionCompletedPayload {
+  inspection_id: string;
+  order_id: string;
+  result: InspectionResult;
+  justification: string;
+  completed_by_user_id: string;
+  completed_at: string;
+}
+
 export type ChecklistItemType = 'boolean' | 'number' | 'text' | 'select';
 
 // Mismo contrato que Catalog (HU-008).
@@ -109,7 +120,10 @@ export interface Inspection {
   evaluation_rule_id: string;
   evaluation_rule_version: number;
   status: InspectionStatus;
-  result: 'RESALE' | 'RECYCLE' | null;
+  result: InspectionResult | null;
+  result_justification: string | null;
+  completed_by_user: string | null;
+  completed_at: Date | null;
   actual_condition: string;
   observations: string | null;
   evidence_refs: string[];

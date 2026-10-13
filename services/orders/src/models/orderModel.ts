@@ -1,6 +1,7 @@
 import { pool } from '../config/db';
-import { DomainEvent, QuoteAcceptedPayload } from '../types/orders';
+import { DomainEvent, InspectionCompletedPayload, QuoteAcceptedPayload } from '../types/orders';
 import { validateQuoteAcceptedEvent } from '../domain/quoteAccepted';
+import { validateInspectionCompletedEvent } from '../domain/inspectionCompleted';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'crypto';
 
 const TRACKING_LINK_TTL_DAYS = 90;
@@ -145,6 +146,54 @@ export class OrderModel {
     }
 
     await sendTrackingLink(trackingEmail!, customerName!, orderNumber!, token!);
+  }
+
+  static async completeFromInspectionEvent(
+    event: DomainEvent<InspectionCompletedPayload>
+  ): Promise<void> {
+    validateInspectionCompletedEvent(event);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const processed = await client.query(
+        `INSERT INTO processed_events (event_id, event_type, tenant_id, correlation_id)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (event_id) DO NOTHING
+         RETURNING event_id`,
+        [event.event_id, event.event_type, event.tenant_id, event.correlation_id]
+      );
+      if (processed.rowCount === 0) {
+        await client.query('COMMIT');
+        return;
+      }
+
+      await client.query(
+        `SELECT set_config('reecicla.operator_user_id', $1, true),
+                set_config('reecicla.status_reason', $2, true)`,
+        [event.payload.completed_by_user_id, event.payload.justification]
+      );
+      const updated = await client.query(
+        `UPDATE orders
+         SET status = 'INSPECTED', updated_at = NOW()
+         WHERE id = $1 AND tenant_id = $2 AND status IN ('RECEIVED', 'INSPECTING')`,
+        [event.payload.order_id, event.tenant_id]
+      );
+      if (updated.rowCount === 0) {
+        const order = await client.query(
+          'SELECT status FROM orders WHERE id = $1 AND tenant_id = $2',
+          [event.payload.order_id, event.tenant_id]
+        );
+        if (order.rows[0]?.status !== 'INSPECTED') {
+          throw new Error('No se encontró la orden elegible para completar la inspección.');
+        }
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   static async getByTrackingToken(token: string): Promise<Record<string, unknown> | null> {
