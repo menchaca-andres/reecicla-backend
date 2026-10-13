@@ -4,14 +4,19 @@ import { randomInt } from 'crypto';
 import { UserModel } from '../models/userModel';
 import { GuestVerificationModel } from '../models/guestVerificationModel';
 import { EmailService } from './emailService';
-import { RegisterDTO, CreateAdminDTO, LoginDTO, AuthPayload, UserResponse, UserRole, CreateTenantDTO, PlatformAdminResponse } from '../types/auth';
+import { RegisterDTO, CreateAdminDTO, LoginDTO, AuthPayload, UserResponse, UserRole, CreateTenantDTO, PlatformAdminResponse, UpdateClientProfileDTO } from '../types/auth';
 import { publishEvent } from '../messaging/eventBus';
 import { TenantModel, TenantSummary } from '../models/tenantModel';
 import { PlatformAdminModel } from '../models/platformAdminModel';
+import { ClientRegistrationModel } from '../models/clientRegistrationModel';
 
 const SALT_ROUNDS = 10;
 const ADMIN_ROLES: UserRole[] = ['TENANT_ADMIN', 'CATALOG_ADMIN', 'INSPECTOR'];
 const TENANT_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const RESERVED_TENANT_SLUGS = new Set([
+  'admin', 'api', 'auth', 'catalogo', 'health', 'historial', 'inspeccion',
+  'logistica', 'quote', 'recicla', 'reglas', 'seguimiento', 'www',
+]);
 
 function jwtSecret(): string {
   const secret = process.env.JWT_SECRET;
@@ -20,20 +25,52 @@ function jwtSecret(): string {
 }
 
 export class AuthService {
-  static async register(dto: RegisterDTO): Promise<{ token: string; user: UserResponse }> {
-    const existing = await UserModel.findByEmailAndTenant(dto.email, dto.tenant_id);
-    if (existing) throw new Error('El usuario ya existe para este tenant.');
+  static async register(dto: RegisterDTO): Promise<void> {
+    const email = dto.email.trim().toLowerCase();
+    if (!dto.tenant_id || !email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new Error('El correo no es válido o falta el contexto del negocio.');
+    }
+    if (email.length > 255) throw new Error('El correo supera la longitud permitida.');
+    if (!dto.password || dto.password.length < 8 || Buffer.byteLength(dto.password, 'utf8') > 72) {
+      throw new Error('La contraseña debe tener entre 8 y 72 bytes.');
+    }
+    if (
+      (dto.name !== undefined && (typeof dto.name !== 'string' || dto.name.trim().length > 255)) ||
+      (dto.phone !== undefined && (typeof dto.phone !== 'string' || dto.phone.trim().length > 50))
+    ) {
+      throw new Error('El nombre o teléfono no tienen un formato válido.');
+    }
+
+    if (await UserModel.findAnyByEmailAndTenant(email, dto.tenant_id)) return;
 
     const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
-    const user = await UserModel.createUser({ ...dto, role: 'CLIENT' }, passwordHash);
-    const token = AuthService.signToken(user.id, user.tenant_id, user.email, user.role as UserRole, user.name);
+    const code = randomInt(100000, 1000000).toString();
+    await ClientRegistrationModel.create({ ...dto, email }, passwordHash, code);
+    try {
+      await EmailService.sendClientRegistrationVerification(email, dto.name?.trim() ?? '', code);
+    } catch (error) {
+      await ClientRegistrationModel.deletePending(dto.tenant_id, email);
+      throw error;
+    }
+  }
 
+  static async verifyClientRegistration(
+    tenantId: string,
+    email: string,
+    code: string
+  ): Promise<{ token: string; user: UserResponse }> {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!tenantId || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail) || !/^\d{6}$/.test(code)) {
+      throw new Error('El correo o el código de verificación no son válidos.');
+    }
+    const user = await ClientRegistrationModel.verifyAndCreateUser(tenantId, normalizedEmail, code);
+    if (!user) throw new Error('El código de verificación es inválido o venció.');
+    const token = AuthService.signToken(user.id, user.tenant_id, user.email, user.role as UserRole, user.name);
     publishEvent('auth.user.registered', {
       event_type: 'user.registered',
       tenant_id: user.tenant_id,
       payload: { user_id: user.id, email: user.email, name: user.name, role: user.role },
     }).catch((err) => console.error('Exception al publicar evento user.registered:', err));
-
     return { token, user: AuthService.toUserResponse(user) };
   }
 
@@ -56,7 +93,7 @@ export class AuthService {
     const name = dto.name.trim();
     const slug = dto.slug.trim().toLowerCase();
     if (!name || name.length > 255) throw new Error('El nombre del negocio debe tener entre 1 y 255 caracteres.');
-    if (!TENANT_SLUG_PATTERN.test(slug) || slug.length > 60) {
+    if (!TENANT_SLUG_PATTERN.test(slug) || slug.length > 60 || RESERVED_TENANT_SLUGS.has(slug)) {
       throw new Error('El slug solo puede contener letras minúsculas, números y guiones.');
     }
     if (!dto.email.trim() || !dto.password || dto.password.length < 8) {
@@ -107,9 +144,31 @@ export class AuthService {
     return PlatformAdminModel.toResponse(admin);
   }
 
-  static async getUserProfile(userId: string): Promise<UserResponse> {
-    const user = await UserModel.findById(userId);
+  static async getUserProfile(userId: string, tenantId: string): Promise<UserResponse> {
+    const user = await UserModel.findById(userId, tenantId);
     if (!user) throw new Error('Usuario no encontrado.');
+    return AuthService.toUserResponse(user);
+  }
+
+  static async updateUserProfile(
+    userId: string,
+    tenantId: string,
+    profile: UpdateClientProfileDTO
+  ): Promise<UserResponse> {
+    const name = profile.name.trim();
+    const phone = profile.phone.trim();
+    const pickupAddress = profile.pickup_address.trim();
+    if (!name || name.length > 255) {
+      throw new Error('El nombre debe tener entre 1 y 255 caracteres.');
+    }
+    if (phone.length > 50) throw new Error('El teléfono supera la longitud permitida.');
+    if (pickupAddress.length > 500) throw new Error('La dirección supera la longitud permitida.');
+    const user = await UserModel.updateClientProfile(userId, tenantId, {
+      name,
+      phone,
+      pickup_address: pickupAddress,
+    });
+    if (!user) throw new Error('Usuario no encontrado para este negocio.');
     return AuthService.toUserResponse(user);
   }
 
@@ -168,7 +227,7 @@ export class AuthService {
   }
 
   private static signToken(userId: string, tenantId: string, email: string, role: UserRole, name?: string): string {
-    const payload: AuthPayload = { userId, tenantId, email, name, role };
+    const payload: AuthPayload = { userId, tenantId, email, name, role, scope: 'tenant' };
     return jwt.sign(payload, jwtSecret(), { expiresIn: '24h' });
   }
 
@@ -179,6 +238,7 @@ export class AuthService {
       email: user.email,
       name: user.name,
       phone: user.phone,
+      pickup_address: user.pickup_address,
       role: user.role,
       created_at: user.created_at,
     };

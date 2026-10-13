@@ -43,13 +43,29 @@ export class UserModel {
     return rows[0] ?? null;
   }
 
-  static async findById(id: string): Promise<User | null> {
+  static async findById(id: string, tenantId: string): Promise<User | null> {
     const query = `
       SELECT *
       FROM users
-      WHERE id = $1 AND is_active = TRUE;
+      WHERE id = $1 AND tenant_id = $2 AND is_active = TRUE;
     `;
-    const { rows } = await pool.query(query, [id]);
+    const { rows } = await pool.query(query, [id, tenantId]);
+    return rows[0] ?? null;
+  }
+
+  static async updateClientProfile(
+    id: string,
+    tenantId: string,
+    profile: { name: string; phone: string; pickup_address: string }
+  ): Promise<User | null> {
+    const { rows } = await pool.query<User>(
+      `UPDATE users
+       SET name = $3, phone = NULLIF($4, ''), pickup_address = NULLIF($5, '')
+       WHERE id = $1 AND tenant_id = $2 AND is_active = TRUE
+       RETURNING id, tenant_id, email, password_hash, name, phone, pickup_address,
+                 role, is_active, created_at, updated_at`,
+      [id, tenantId, profile.name, profile.phone, profile.pickup_address]
+    );
     return rows[0] ?? null;
   }
 }

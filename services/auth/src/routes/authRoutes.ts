@@ -8,8 +8,10 @@ import { requireInternalService } from '../middlewares/internalServiceMiddleware
 const router = Router();
 
 router.post('/register', AuthController.register);
+router.post('/register/verify', AuthController.verifyRegistration);
 router.post('/login', AuthController.login);
 router.get('/me', authenticateToken, AuthController.getProfile);
+router.patch('/me', authenticateToken, AuthController.updateProfile);
 
 router.post('/platform/login', AuthController.platformLogin);
 router.get('/platform/me', authenticateToken, authorizePlatformAdmin, AuthController.getPlatformProfile);

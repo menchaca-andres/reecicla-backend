@@ -20,7 +20,7 @@ export interface CreateInspectionInput {
 }
 
 const INSPECTION_COLUMNS = `
-  i.id, i.tenant_id, i.order_id, i.device_type_id, r.device_type_name,
+  i.id, i.tenant_id, i.order_id, r.quote_id, i.device_type_id, r.device_type_name,
   i.evaluation_rule_id, i.evaluation_rule_version, i.status, i.result,
   i.result_justification, i.completed_by_user, i.completed_at,
   i.actual_condition, i.observations, i.evidence_refs, i.inspected_by_user,
@@ -143,15 +143,19 @@ export class InspectionModel {
     try {
       await client.query('BEGIN');
       const existing = await client.query(
-        `SELECT id, status, result, result_justification
-         FROM inspections
-         WHERE tenant_id = $1 AND order_id = $2
-         FOR UPDATE`,
+        `SELECT i.id, i.status, i.result, i.result_justification, i.actual_condition, r.quote_id
+         FROM inspections i
+         JOIN received_devices r ON r.tenant_id = i.tenant_id AND r.order_id = i.order_id
+         WHERE i.tenant_id = $1 AND i.order_id = $2
+         FOR UPDATE OF i`,
         [tenantId, orderId]
       );
       const inspection = existing.rows[0];
       if (!inspection) {
         throw new DomainError(404, 'La orden no tiene una inspección registrada.');
+      }
+      if (!inspection.quote_id) {
+        throw new DomainError(409, 'La orden no tiene una cotización vinculada para generar el resultado de HU-017.');
       }
       if (inspection.status === 'COMPLETED') {
         if (inspection.result !== result || inspection.result_justification !== justification) {
@@ -174,6 +178,8 @@ export class InspectionModel {
         const payload: InspectionCompletedPayload = {
           inspection_id: inspection.id,
           order_id: orderId,
+          quote_id: inspection.quote_id,
+          actual_condition: inspection.actual_condition,
           result,
           justification,
           completed_by_user_id: inspectorUserId,

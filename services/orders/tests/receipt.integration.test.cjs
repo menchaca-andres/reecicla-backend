@@ -40,12 +40,13 @@ test('registra la recepción una vez y crea un DeviceReceived en outbox', {
     assert.equal(history.rows[0].reason, 'Equipo recibido en almacén');
 
     const outbox = await pool.query(
-      "SELECT event_type, routing_key FROM domain_event_outbox WHERE aggregate_id = $1",
+      "SELECT event_type, routing_key, payload FROM domain_event_outbox WHERE aggregate_id = $1",
       [orderId]
     );
     assert.equal(outbox.rowCount, 1);
     assert.equal(outbox.rows[0].event_type, 'DeviceReceived');
     assert.equal(outbox.rows[0].routing_key, 'device.received');
+    assert.equal(outbox.rows[0].payload.quote_id, quoteId);
   } finally {
     await pool.query('DELETE FROM order_status_history WHERE tenant_id = $1 AND order_id = $2', [tenantId, orderId]);
     await pool.query('DELETE FROM domain_event_outbox WHERE tenant_id = $1 AND aggregate_id = $2', [tenantId, orderId]);

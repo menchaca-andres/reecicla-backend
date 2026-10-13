@@ -68,10 +68,39 @@ export interface Quote {
   final_price: number;
   currency: string;
   quote_type: string;
+  parent_quote_id?: string | null;
+  adjustment_reason?: string | null;
+  adjusted_quote?: Quote | null;
+  adjustment_audit?: {
+    outcome: 'ADJUSTED' | 'UNCHANGED';
+    declared_condition: string;
+    actual_condition: string;
+    justification: string;
+  } | null;
   valid_until: Date;
   status: string;
   created_at: Date;
   updated_at: Date;
+}
+
+export interface InspectionCompletedPayload {
+  inspection_id: string;
+  order_id: string;
+  quote_id: string;
+  actual_condition: string;
+  result: 'RESALE' | 'RECYCLE';
+  justification: string;
+  completed_by_user_id: string;
+  completed_at: string;
+}
+
+export interface DomainEvent<T> {
+  event_id: string;
+  correlation_id: string;
+  tenant_id: string;
+  event_type: string;
+  timestamp: string;
+  payload: T;
 }
 
 export interface CreateQuoteDTO {

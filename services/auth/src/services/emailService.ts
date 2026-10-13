@@ -55,6 +55,18 @@ export class EmailService {
     });
   }
 
+  static async sendClientRegistrationVerification(email: string, name: string, code: string): Promise<void> {
+    const { from, transporter } = EmailService.createTransporter();
+    const safeName = escapeHtml(name);
+    await transporter.sendMail({
+      from,
+      to: email,
+      subject: 'Verifica tu correo para crear tu cuenta en Reecicla',
+      text: `Hola ${name}, tu código para crear tu cuenta es ${code}. Vence en 10 minutos.`,
+      html: `<p>Hola ${safeName},</p><p>Tu código para crear tu cuenta es:</p><p style="font-size:24px;font-weight:bold;letter-spacing:4px">${code}</p><p>Vence en 10 minutos. Si no solicitaste una cuenta, ignora este correo.</p>`,
+    });
+  }
+
   static async sendOrderTrackingLink(
     email: string,
     customerName: string,
