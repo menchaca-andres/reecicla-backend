@@ -7,6 +7,7 @@ import { requireInternalService } from '../middlewares/internalServiceMiddleware
 
 const router = Router();
 
+router.post('/client-tenants', AuthController.listClientTenants);
 router.post('/register', AuthController.register);
 router.post('/register/verify', AuthController.verifyRegistration);
 router.post('/login', AuthController.login);

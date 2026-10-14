@@ -4,6 +4,22 @@ import { EmailService } from '../services/emailService';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 
 export class AuthController {
+  static async listClientTenants(req: Request, res: Response): Promise<void> {
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim() : '';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 255) {
+      res.status(200).json({ tenants: [] });
+      return;
+    }
+
+    try {
+      const tenants = await AuthService.listClientTenants(email);
+      res.status(200).json({ tenants });
+    } catch (error) {
+      console.error('[AuthController.listClientTenants] No se pudieron consultar los negocios:', error);
+      res.status(500).json({ error: 'No se pudieron consultar los negocios en este momento.' });
+    }
+  }
+
   static async platformLogin(req: Request, res: Response): Promise<void> {
     try {
       const { email, password } = req.body;

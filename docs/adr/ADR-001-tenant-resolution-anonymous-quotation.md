@@ -52,6 +52,7 @@ La pantalla de aceptación presenta estas opciones:
 
 #### Iniciar sesión
 
+- En la app móvil, el cliente puede ingresar su correo antes de autenticarse para consultar los nombres y slugs de los negocios activos donde tiene una cuenta `CLIENT`; luego selecciona el negocio e inicia sesión allí. El endpoint de descubrimiento no devuelve usuarios, IDs internos ni datos de perfil y tiene límite de solicitudes por IP.
 - El cliente se autentica con correo y contraseña en el contexto del tenant de la URL.
 - Auth devuelve un JWT con `userId` y `tenantId`; Gateway aplica la validación de tenant en las solicitudes siguientes.
 - El frontend obtiene nombre, correo, teléfono y dirección guardada para ese perfil. Nombre, teléfono y dirección se pueden revisar/editar antes de aceptar.
@@ -106,9 +107,9 @@ Gateway aplica límites por IP y tenant para el inicio/verificación de registro
 
 **Descartado:** añade fricción innecesaria. Se conserva la aceptación invitada con verificación OTP, junto con las opciones autenticadas.
 
-### Consultar si el correo existe antes de ofrecer opciones
+### Consultar si el correo existe en la web antes de ofrecer opciones
 
-**Descartado:** no es necesario para iniciar sesión/registro y facilitaría enumerar cuentas. La UI ofrece opciones sin revelar el estado de una dirección.
+**Descartado para el frontend web:** no es necesario para el login web y facilitaría enumerar cuentas, por lo que esa interfaz ofrece las opciones sin revelar el estado de una dirección. Para cumplir el flujo de selección de negocio de la app móvil, se permite un lookup limitado por IP que devuelve únicamente los negocios asociados a cuentas `CLIENT`; esto revela membresías y se acepta como tradeoff funcional de la app móvil.
 
 ---
 
@@ -124,6 +125,7 @@ Gateway aplica límites por IP y tenant para el inicio/verificación de registro
 ### Límites y riesgos conocidos
 
 - Los límites de Gateway son por proceso; un despliegue con varias réplicas requiere un almacén coordinado para límites globales.
+- El descubrimiento de negocios por correo móvil permite inferir membresías; el límite por IP reduce abuso, pero no elimina el riesgo de enumeración.
 - La consulta individual de cotización por UUID permite recuperar el recurso conociendo su identificador, dentro de su tenant. El UUID no reemplaza autorización por usuario; véase el límite documentado en ADR-002.
 - No se incorporan subdominios de tenants, dominios personalizados, certificados automáticos ni cookies compartidas entre tenants.
 

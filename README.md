@@ -50,6 +50,7 @@ Prefijo de negocio: `/recicla/{slug}/…`
 
 ### Autenticación
 - `GET /api/auth/tenants/slug/:slug` ➔ Metadatos públicos del negocio (nombre, tenant interno).
+- `POST /api/auth/client-tenants` ➔ Para login móvil, devuelve nombre y slug de negocios activos donde el correo tiene una cuenta `CLIENT`. Límite: 10 req/min por IP.
 - `POST /recicla/{slug}/auth/register` ➔ Registrar cliente en ese negocio (sin UUID).
 - `POST /recicla/{slug}/auth/login` ➔ Login en ese negocio (sin UUID).
 - `GET /api/auth/me` ➔ Perfil autenticado (`Bearer <token>`).

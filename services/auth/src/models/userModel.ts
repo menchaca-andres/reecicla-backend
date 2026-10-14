@@ -1,7 +1,22 @@
 import { pool } from '../config/db';
-import { User } from '../types/auth';
+import { ClientTenantSummary, User } from '../types/auth';
 
 export class UserModel {
+  static async findActiveClientTenantsByEmail(email: string): Promise<ClientTenantSummary[]> {
+    const { rows } = await pool.query<ClientTenantSummary>(
+      `SELECT DISTINCT t.name, t.slug
+       FROM users u
+       JOIN tenants t ON t.id = u.tenant_id
+       WHERE LOWER(u.email) = LOWER($1)
+         AND u.role = 'CLIENT'
+         AND u.is_active = TRUE
+         AND t.status = 'ACTIVE'
+       ORDER BY t.name`,
+      [email.trim()]
+    );
+    return rows;
+  }
+
   static async createUser(
     dto: { tenant_id: string; email: string; name?: string; phone?: string; role: string },
     passwordHash: string

@@ -4,7 +4,7 @@ import { randomInt } from 'crypto';
 import { UserModel } from '../models/userModel';
 import { GuestVerificationModel } from '../models/guestVerificationModel';
 import { EmailService } from './emailService';
-import { RegisterDTO, CreateAdminDTO, LoginDTO, AuthPayload, UserResponse, UserRole, CreateTenantDTO, PlatformAdminResponse, UpdateClientProfileDTO } from '../types/auth';
+import { RegisterDTO, CreateAdminDTO, LoginDTO, AuthPayload, ClientTenantSummary, UserResponse, UserRole, CreateTenantDTO, PlatformAdminResponse, UpdateClientProfileDTO } from '../types/auth';
 import { publishEvent } from '../messaging/eventBus';
 import { TenantModel, TenantSummary } from '../models/tenantModel';
 import { PlatformAdminModel } from '../models/platformAdminModel';
@@ -118,6 +118,10 @@ export class AuthService {
     if (!isMatch) throw new Error('Credenciales inválidas o tenant incorrecto.');
     const token = AuthService.signToken(user.id, user.tenant_id, user.email, user.role as UserRole, user.name);
     return { token, user: AuthService.toUserResponse(user) };
+  }
+
+  static async listClientTenants(email: string): Promise<ClientTenantSummary[]> {
+    return UserModel.findActiveClientTenantsByEmail(email);
   }
 
   static async loginPlatform(email: string, password: string): Promise<{ token: string; user: PlatformAdminResponse }> {

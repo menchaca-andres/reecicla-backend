@@ -34,15 +34,31 @@ const QUOTE_RATE_LIMIT = Number(process.env.QUOTE_RATE_LIMIT_PER_MINUTE || 10);
 const EMAIL_VERIFICATION_RATE_LIMIT = Number(process.env.EMAIL_VERIFICATION_RATE_LIMIT_PER_MINUTE || 5);
 const quoteHits = new Map<string, number[]>();
 const registrationHits = new Map<string, number[]>();
+const clientTenantLookupHits = new Map<string, number[]>();
 const quoteRateLimitCleanup = setInterval(() => {
   const cutoff = Date.now() - 60_000;
-  for (const hits of [quoteHits, registrationHits]) {
+  for (const hits of [quoteHits, registrationHits, clientTenantLookupHits]) {
     for (const [key, timestamps] of hits) {
       if (timestamps.every((timestamp) => timestamp <= cutoff)) hits.delete(key);
     }
   }
 }, 60_000);
 quoteRateLimitCleanup.unref();
+
+const clientTenantLookupRateLimit: RequestHandler = (req, res, next) => {
+  const key = req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  const recent = (clientTenantLookupHits.get(key) ?? [])
+    .filter((timestamp) => now - timestamp < 60_000);
+  if (recent.length >= 10) {
+    res.setHeader('Retry-After', '60');
+    res.status(429).json({ error: 'Demasiadas consultas. Inténtalo de nuevo en un minuto.' });
+    return;
+  }
+  recent.push(now);
+  clientTenantLookupHits.set(key, recent);
+  next();
+};
 
 const quoteCreateRateLimit: RequestHandler = (req, res, next) => {
   if (req.method !== 'POST') {
@@ -191,6 +207,10 @@ app.use('/recicla/:slug/api/auth', ...tenantScopedProxy(AUTH_SERVICE_URL, '/api/
 app.use('/recicla/:slug/api/orders', ...tenantScopedProxy(ORDERS_SERVICE_URL, '/api/orders'));
 app.use('/recicla/:slug/api/inspections', ...tenantScopedProxy(INSPECTION_SERVICE_URL, '/api/inspections'));
 
+app.post('/api/auth/client-tenants', clientTenantLookupRateLimit, proxy(AUTH_SERVICE_URL, {
+  parseReqBody: false,
+  proxyReqPathResolver: (req) => req.originalUrl,
+}));
 app.use('/api/auth', proxy(AUTH_SERVICE_URL, {
   parseReqBody: false,
   proxyReqPathResolver: (req) => req.originalUrl,

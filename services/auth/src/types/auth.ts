@@ -81,6 +81,11 @@ export interface UserResponse {
   created_at: Date;
 }
 
+export interface ClientTenantSummary {
+  name: string;
+  slug: string;
+}
+
 export interface UpdateClientProfileDTO {
   name: string;
   phone: string;
