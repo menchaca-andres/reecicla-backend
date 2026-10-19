@@ -144,6 +144,9 @@ services:
       JWT_SECRET: ${JWT_SECRET:-super_secret_jwt_reecicla_development_2026}
       DATABASE_URL: postgres://reecicla_user:reecicla_password@catalog-db:5432/reecicla_catalog_db
       RABBITMQ_URL: amqp://reecicla:reecicla_password@rabbitmq:5672
+      AUTH_SERVICE_URL: http://auth-service:3001
+      ORDERS_SERVICE_URL: http://orders-service:3004
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-super_secret_internal_token_reecicla_2026}
     ports:
       - "3003:3003"
     depends_on:
@@ -151,6 +154,10 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      auth-service:
+        condition: service_started
+      orders-service:
+        condition: service_started
 
   # Microservicio Quotation
   quotation-service:

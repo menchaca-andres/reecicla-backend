@@ -1,7 +1,9 @@
 import { Request, Response } from 'express';
+import jwt from 'jsonwebtoken';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { OrderModel } from '../models/orderModel';
 import { dispatchPendingOrderEvents } from '../messaging/eventPublisher';
+import { AuthPayload } from '../types/orders';
 
 export class OrderController {
   static async track(req: Request, res: Response): Promise<void> {
@@ -189,5 +191,42 @@ export class OrderController {
       res.status(status).json({ error: message });
     }
   }
+
+  static async getActiveDependencies(req: Request, res: Response): Promise<void> {
+    try {
+      const internalToken = req.header('x-internal-service-token');
+      const expectedToken = process.env.INTERNAL_SERVICE_TOKEN;
+      let tenantId = (req.header('x-tenant-id') || req.query.tenant_id) as string;
+
+      const authHeader = req.header('authorization');
+      if (internalToken && expectedToken && internalToken === expectedToken) {
+        // Acceso por token de servicio interno
+      } else if (authHeader) {
+        // Acceso por JWT de usuario autenticado
+        const token = authHeader.split(' ')[1];
+        const payload = jwt.verify(token, process.env.JWT_SECRET!) as AuthPayload;
+        if (!tenantId) tenantId = payload.tenantId;
+      } else {
+        res.status(401).json({ error: 'Token interno o de autorización requerido.' });
+        return;
+      }
+
+      if (!tenantId) {
+        res.status(400).json({ error: 'tenant_id es requerido.' });
+        return;
+      }
+
+      const deviceTypeIds = req.query.device_type_ids
+        ? String(req.query.device_type_ids).split(',').map((id) => id.trim()).filter(Boolean)
+        : undefined;
+
+      const dependencies = await OrderModel.getActiveDependencies(tenantId, deviceTypeIds);
+      res.status(200).json({ dependencies });
+    } catch (error: any) {
+      console.error('[Orders] Error consultando dependencias activas:', error);
+      res.status(500).json({ error: error.message || 'Error consultando dependencias activas.' });
+    }
+  }
 }
+
 

@@ -138,4 +138,56 @@ export class CatalogController {
       res.status(500).json({ error: 'Error interno al inactivar el tipo de dispositivo.' });
     }
   }
+
+  static async evaluateInactivity(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const tenantId = resolveTenantId(req);
+      if (!tenantId) {
+        res.status(400).json({ error: 'No se pudo determinar el contexto del negocio.' });
+        return;
+      }
+      const cutoffMonths = req.query.cutoff_months ? Number(req.query.cutoff_months) : 12;
+      const summary = await DeviceTypeModel.evaluateInactivity(tenantId, cutoffMonths);
+      res.status(200).json(summary);
+    } catch (error: any) {
+      console.error('[CatalogController.evaluateInactivity] Error:', error);
+      res.status(500).json({ error: error.message || 'Error evaluando inactividad de tipos.' });
+    }
+  }
+
+  static async executeInactivityMaintenance(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const tenantId = resolveTenantId(req);
+      if (!tenantId) {
+        res.status(400).json({ error: 'No se pudo determinar el contexto del negocio.' });
+        return;
+      }
+      const cutoffMonths = req.body?.cutoff_months ? Number(req.body.cutoff_months) : 12;
+      const user = req.user;
+      const executedBy = user ? `${user.name || user.email || 'Admin'} (${user.role})` : 'ADMIN_MANUAL';
+
+      const result = await DeviceTypeModel.executeInactivityDeactivation(tenantId, executedBy, cutoffMonths);
+      res.status(200).json(result);
+    } catch (error: any) {
+      console.error('[CatalogController.executeInactivityMaintenance] Error:', error);
+      res.status(500).json({ error: error.message || 'Error ejecutando mantenimiento de inactividad.' });
+    }
+  }
+
+  static async listAuditLogs(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const tenantId = resolveTenantId(req);
+      if (!tenantId) {
+        res.status(400).json({ error: 'No se pudo determinar el contexto del negocio.' });
+        return;
+      }
+      const limit = req.query.limit ? Number(req.query.limit) : 50;
+      const auditLogs = await DeviceTypeModel.getAuditLogs(tenantId, limit);
+      res.status(200).json({ audit_logs: auditLogs });
+    } catch (error: any) {
+      console.error('[CatalogController.listAuditLogs] Error:', error);
+      res.status(500).json({ error: error.message || 'Error consultando auditoría de catálogo.' });
+    }
+  }
 }
+

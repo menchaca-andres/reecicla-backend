@@ -691,4 +691,57 @@ export class OrderModel {
       client.release();
     }
   }
+
+  static async getActiveDependencies(
+    tenantId: string,
+    deviceTypeIds?: string[]
+  ): Promise<Record<string, {
+    device_type_id: string;
+    device_type_name: string;
+    pending_orders: number;
+    physical_stock: number;
+    has_active_dependencies: boolean;
+    details: string;
+  }>> {
+    let query = `
+      SELECT
+        device_type_id,
+        device_type_name,
+        COUNT(*) FILTER (WHERE status IN ('ACCEPTED', 'BOX_REQUESTED', 'BOX_SHIPPED', 'IN_TRANSIT', 'RECEIVED', 'INSPECTING', 'INSPECTED'))::int AS pending_orders,
+        COUNT(*) FILTER (WHERE status = 'READY_FOR_RESALE' OR inventory_status = 'READY_FOR_RESALE')::int AS physical_stock,
+        COUNT(*)::int AS total_active_dependencies
+      FROM orders
+      WHERE tenant_id = $1
+        AND (
+          status IN ('ACCEPTED', 'BOX_REQUESTED', 'BOX_SHIPPED', 'IN_TRANSIT', 'RECEIVED', 'INSPECTING', 'INSPECTED', 'READY_FOR_RESALE')
+          OR inventory_status = 'READY_FOR_RESALE'
+        )
+    `;
+    const params: any[] = [tenantId];
+    if (deviceTypeIds && deviceTypeIds.length > 0) {
+      query += ` AND device_type_id = ANY($2)`;
+      params.push(deviceTypeIds);
+    }
+    query += ` GROUP BY device_type_id, device_type_name`;
+
+    const result = await pool.query(query, params);
+    const map: Record<string, any> = {};
+    for (const row of result.rows) {
+      const pending = Number(row.pending_orders || 0);
+      const stock = Number(row.physical_stock || 0);
+      const parts: string[] = [];
+      if (pending > 0) parts.push(`${pending} orden(es) pendiente(s) en proceso`);
+      if (stock > 0) parts.push(`${stock} equipo(s) en stock físico disponible para reventa`);
+      map[row.device_type_id] = {
+        device_type_id: row.device_type_id,
+        device_type_name: row.device_type_name,
+        pending_orders: pending,
+        physical_stock: stock,
+        has_active_dependencies: (pending + stock) > 0,
+        details: parts.join(' y ') || 'Sin dependencias activas',
+      };
+    }
+    return map;
+  }
 }
+

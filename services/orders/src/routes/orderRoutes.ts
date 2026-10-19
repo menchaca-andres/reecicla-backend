@@ -6,6 +6,7 @@ import { authenticateToken, authorizeRoles } from '../middlewares/authMiddleware
 const router = Router();
 const logisticsRoles = ['TENANT_ADMIN', 'SUPER_ADMIN', 'INSPECTOR'];
 
+router.get('/internal/active-dependencies', OrderController.getActiveDependencies);
 router.get('/tracking/:token', OrderController.track);
 router.get('/admin/all', authenticateToken, authorizeRoles(...logisticsRoles), OrderController.listAll);
 router.get('/', authenticateToken, OrderController.listMine);
