@@ -19,5 +19,6 @@ router.post('/:id/box-requests', authenticateToken, BoxRequestController.create)
 router.get('/:id/box-requests', authenticateToken, BoxRequestController.list);
 router.post('/:id/dispatch', authenticateToken, authorizeRoles(...logisticsRoles), OrderController.dispatch);
 router.post('/:id/receive', authenticateToken, authorizeRoles(...logisticsRoles), OrderController.receive);
+router.post('/:id/disposition', authenticateToken, authorizeRoles(...logisticsRoles), OrderController.registerDisposition);
 
 export default router;

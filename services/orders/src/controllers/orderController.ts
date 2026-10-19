@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { OrderModel } from '../models/orderModel';
 import { dispatchPendingOrderEvents } from '../messaging/eventPublisher';
+import { DispositionError, validateDispositionInput } from '../domain/disposition';
 
 export class OrderController {
   static async authorizePayment(req: Request, res: Response): Promise<void> {
@@ -227,6 +228,41 @@ export class OrderController {
         message.startsWith('No se puede registrar la recepción') ? 409 : 500;
       console.error('[Orders] Error al registrar recepción:', error);
       res.status(status).json({ error: message });
+    }
+  }
+
+  static async registerDisposition(req: AuthenticatedRequest, res: Response): Promise<void> {
+    if (!req.authUser) {
+      res.status(401).json({ error: 'Usuario no autenticado.' });
+      return;
+    }
+
+    try {
+      const input = validateDispositionInput(req.body);
+      const result = await OrderModel.registerDisposition(
+        req.authUser.tenantId,
+        req.params.id,
+        req.authUser.userId,
+        input
+      );
+      try {
+        await dispatchPendingOrderEvents();
+      } catch (error) {
+        console.error('[Orders] Destino guardado; DispositionCompleted permanece en outbox:', error);
+      }
+      res.status(result.already_registered ? 200 : 201).json({
+        message: result.already_registered
+          ? 'El destino final ya estaba registrado.'
+          : 'Destino final registrado. La orden quedó cerrada.',
+        ...result,
+      });
+    } catch (error) {
+      if (error instanceof DispositionError) {
+        res.status(error.httpStatus).json({ error: error.message });
+        return;
+      }
+      console.error('[Orders] Error al registrar el destino final:', error);
+      res.status(500).json({ error: 'No se pudo registrar el destino final.' });
     }
   }
 }

@@ -135,3 +135,33 @@ export interface CreateBoxRequestInput {
   country?: string;
   notes?: string;
 }
+
+export type DispositionType = 'RESALE' | 'RECYCLE' | 'RETURN';
+
+export type DispositionStatus = 'PENDING' | 'COMPLETED';
+
+export interface RegisterDispositionInput {
+  type: DispositionType;
+  reference: string;
+}
+
+export interface Disposition {
+  id: string;
+  tenant_id: string;
+  order_id: string;
+  type: DispositionType;
+  status: DispositionStatus;
+  reference: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DispositionCompletedPayload {
+  disposition_id: string;
+  order_id: string;
+  type: DispositionType;
+  reference: string;
+  completed_by_user_id: string;
+  completed_at: string;
+}

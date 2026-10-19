@@ -2,15 +2,19 @@ import { pool } from '../config/db';
 import {
   AdjustmentResolution,
   AdjustedQuoteEventPayload,
+  Disposition,
+  DispositionCompletedPayload,
   DomainEvent,
   InspectionCompletedPayload,
   PaymentCompletedPayload,
   PaymentFailedPayload,
   QuoteAcceptedPayload,
+  RegisterDispositionInput,
 } from '../types/orders';
 import { validateQuoteAcceptedEvent } from '../domain/quoteAccepted';
 import { validateInspectionCompletedEvent } from '../domain/inspectionCompleted';
 import { originalPriceWasConfirmed } from '../domain/inspectionPayment';
+import { DispositionError, decideDispositionAction } from '../domain/disposition';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'crypto';
 
 const TRACKING_LINK_TTL_DAYS = 90;
@@ -623,6 +627,10 @@ export class OrderModel {
               o.accepted_at, o.created_at,
               o.tracking_token_hash, o.tracking_token_expires_at,
               b.tracking_code, b.status AS box_status, b.shipped_at,
+              d.type AS disposition_type,
+              d.status AS disposition_status,
+              d.reference AS disposition_reference,
+              d.completed_at AS disposition_completed_at,
               COALESCE(
                 json_agg(json_build_object(
                   'previous_status', h.previous_status,
@@ -639,10 +647,11 @@ export class OrderModel {
          ORDER BY requested_at DESC
          LIMIT 1
        ) b ON true
+       LEFT JOIN dispositions d ON d.order_id = o.id AND d.tenant_id = o.tenant_id
        LEFT JOIN order_status_history h ON h.order_id = o.id AND h.tenant_id = o.tenant_id
        WHERE o.tracking_token_hash = $1
          AND o.tracking_token_expires_at > NOW()
-       GROUP BY o.id, b.tracking_code, b.status, b.shipped_at`,
+       GROUP BY o.id, d.id, b.tracking_code, b.status, b.shipped_at`,
       [providedHash]
     );
     const order = result.rows[0];
@@ -662,6 +671,10 @@ export class OrderModel {
               b.tracking_code,
               b.status AS box_status,
               b.shipped_at,
+              d.type AS disposition_type,
+              d.status AS disposition_status,
+              d.reference AS disposition_reference,
+              d.completed_at AS disposition_completed_at,
               COALESCE(
                 json_agg(json_build_object(
                   'previous_status', h.previous_status,
@@ -678,9 +691,10 @@ export class OrderModel {
          ORDER BY requested_at DESC
          LIMIT 1
        ) b ON true
+       LEFT JOIN dispositions d ON d.order_id = o.id AND d.tenant_id = o.tenant_id
        LEFT JOIN order_status_history h ON h.order_id = o.id AND h.tenant_id = o.tenant_id
        WHERE o.tenant_id = $1 AND o.user_id = $2
-       GROUP BY o.id, b.tracking_code, b.status, b.shipped_at
+       GROUP BY o.id, d.id, b.tracking_code, b.status, b.shipped_at
        ORDER BY o.created_at DESC`,
       [tenantId, userId]
     );
@@ -693,6 +707,10 @@ export class OrderModel {
               b.tracking_code,
               b.status AS box_status,
               b.shipped_at,
+              d.type AS disposition_type,
+              d.status AS disposition_status,
+              d.reference AS disposition_reference,
+              d.completed_at AS disposition_completed_at,
               COALESCE(
                 json_agg(json_build_object(
                   'previous_status', h.previous_status,
@@ -709,9 +727,10 @@ export class OrderModel {
          ORDER BY requested_at DESC
          LIMIT 1
        ) b ON true
+       LEFT JOIN dispositions d ON d.order_id = o.id AND d.tenant_id = o.tenant_id
        LEFT JOIN order_status_history h ON h.order_id = o.id AND h.tenant_id = o.tenant_id
        WHERE o.tenant_id = $1
-       GROUP BY o.id, b.tracking_code, b.status, b.shipped_at
+       GROUP BY o.id, d.id, b.tracking_code, b.status, b.shipped_at
        ORDER BY o.created_at DESC`,
       [tenantId]
     );
@@ -724,6 +743,10 @@ export class OrderModel {
               b.tracking_code,
               b.status AS box_status,
               b.shipped_at,
+              d.type AS disposition_type,
+              d.status AS disposition_status,
+              d.reference AS disposition_reference,
+              d.completed_at AS disposition_completed_at,
               COALESCE(
                 json_agg(json_build_object(
                   'previous_status', h.previous_status,
@@ -740,9 +763,10 @@ export class OrderModel {
          ORDER BY requested_at DESC
          LIMIT 1
        ) b ON true
+       LEFT JOIN dispositions d ON d.order_id = o.id AND d.tenant_id = o.tenant_id
        LEFT JOIN order_status_history h ON h.order_id = o.id AND h.tenant_id = o.tenant_id
        WHERE o.id = $1 AND o.tenant_id = $2 AND o.user_id = $3
-       GROUP BY o.id, b.tracking_code, b.status, b.shipped_at`,
+       GROUP BY o.id, d.id, b.tracking_code, b.status, b.shipped_at`,
       [orderId, tenantId, userId]
     );
     return rows[0] ?? null;
@@ -870,6 +894,107 @@ export class OrderModel {
         device_type_name: order.device_type_name,
         received_at: receivedAt,
       };
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  static async registerDisposition(
+    tenantId: string,
+    orderId: string,
+    operatorUserId: string,
+    input: RegisterDispositionInput
+  ): Promise<{ disposition: Disposition; order_status: 'CLOSED'; already_registered: boolean }> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const orderResult = await client.query<{ id: string; status: string }>(
+        `SELECT id, status FROM orders WHERE id = $1 AND tenant_id = $2 FOR UPDATE`,
+        [orderId, tenantId]
+      );
+      const order = orderResult.rows[0];
+      if (!order) throw new DispositionError('Orden no encontrada.', 404);
+
+      const existingResult = await client.query<Disposition>(
+        `SELECT id, tenant_id, order_id, type, status, reference, completed_at, created_at, updated_at
+         FROM dispositions
+         WHERE order_id = $1 AND tenant_id = $2
+         FOR UPDATE`,
+        [orderId, tenantId]
+      );
+      const existing = existingResult.rows[0] ?? null;
+
+      const action = decideDispositionAction(order, existing, input);
+      if (action === 'ALREADY_REGISTERED' && existing) {
+        await client.query('COMMIT');
+        return { disposition: existing, order_status: 'CLOSED', already_registered: true };
+      }
+
+      let disposition: Disposition;
+      if (action === 'CREATE') {
+        const inserted = await client.query<Disposition>(
+          `INSERT INTO dispositions (tenant_id, order_id, type, status, reference, completed_at)
+           VALUES ($1, $2, $3, 'COMPLETED', $4, NOW())
+           RETURNING id, tenant_id, order_id, type, status, reference, completed_at, created_at, updated_at`,
+          [tenantId, orderId, input.type, input.reference]
+        );
+        disposition = inserted.rows[0];
+      } else {
+        const completed = await client.query<Disposition>(
+          `UPDATE dispositions
+           SET status = 'COMPLETED', reference = $1, completed_at = NOW(), updated_at = NOW()
+           WHERE id = $2 AND tenant_id = $3 AND status = 'PENDING'
+           RETURNING id, tenant_id, order_id, type, status, reference, completed_at, created_at, updated_at`,
+          [input.reference, existing!.id, tenantId]
+        );
+        if (completed.rowCount === 0) {
+          throw new DispositionError('El destino de esta orden ya fue completado.', 409);
+        }
+        disposition = completed.rows[0];
+      }
+
+      await client.query(
+        `SELECT set_config('reecicla.operator_user_id', $1, true),
+                set_config('reecicla.status_reason', $2, true)`,
+        [operatorUserId, `Destino final registrado: ${input.type} (${input.reference}).`]
+      );
+      await client.query(
+        `UPDATE orders SET status = 'DISPOSED', updated_at = NOW()
+         WHERE id = $1 AND tenant_id = $2`,
+        [orderId, tenantId]
+      );
+      await client.query(
+        `SELECT set_config('reecicla.status_reason', $1, true)`,
+        ['Ciclo completado: la orden se cierra tras registrar el destino final.']
+      );
+      await client.query(
+        `UPDATE orders SET status = 'CLOSED', updated_at = NOW()
+         WHERE id = $1 AND tenant_id = $2`,
+        [orderId, tenantId]
+      );
+
+      const payload: DispositionCompletedPayload = {
+        disposition_id: disposition.id,
+        order_id: orderId,
+        type: input.type,
+        reference: input.reference,
+        completed_by_user_id: operatorUserId,
+        completed_at: new Date(disposition.completed_at ?? Date.now()).toISOString(),
+      };
+      await client.query(
+        `INSERT INTO domain_event_outbox (
+           tenant_id, aggregate_id, correlation_id, event_type, routing_key, payload
+         ) VALUES ($1, $2, $2, 'DispositionCompleted', 'disposition.completed', $3::jsonb)
+         ON CONFLICT (aggregate_id, event_type) DO NOTHING`,
+        [tenantId, orderId, JSON.stringify(payload)]
+      );
+
+      await client.query('COMMIT');
+      return { disposition, order_status: 'CLOSED', already_registered: false };
     } catch (error) {
       await client.query('ROLLBACK').catch(() => undefined);
       throw error;
