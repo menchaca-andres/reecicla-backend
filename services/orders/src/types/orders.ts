@@ -99,6 +99,16 @@ export interface PaymentCompletedPayload {
   paid_at: string;
 }
 
+export interface PaymentFailedPayload {
+  payment_id: string;
+  order_id: string;
+  amount: number;
+  currency: string;
+  method: 'BANK_TRANSFER' | 'CHECK';
+  failure_reason: string;
+  failed_at: string;
+}
+
 export type AdjustmentResolution = 'RETURN' | 'RECYCLE';
 
 export type BoxRequestStatus = 'REQUESTED' | 'SHIPPED' | 'DELIVERED' | 'LOST' | 'CANCELLED';

@@ -2,7 +2,7 @@ import { createReadStream } from 'fs';
 import { Request, Response } from 'express';
 import { authorizeOrder } from '../clients/ordersClient';
 import { identifyReceipt, validateIdempotencyKey } from '../domain/paymentReceipt';
-import { SimulatedPayoutAdapter } from '../domain/payoutAdapter';
+import { attemptPayout, SimulatedPayoutAdapter } from '../domain/payoutAdapter';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { PaymentModel } from '../models/paymentModel';
 import { dispatchPendingPaymentEvents } from '../messaging/eventPublisher';
@@ -27,7 +27,8 @@ function publicPayment(payment: Awaited<ReturnType<typeof PaymentModel.findForOr
     reference: payment.reference,
     paid_at: payment.paid_at,
     created_at: payment.created_at,
-    receipt_available: true,
+    failure_reason: payment.failure_reason ?? null,
+    receipt_available: payment.status === 'COMPLETED',
     external_receipt_available: Boolean(payment.external_receipt_path),
   };
 }
@@ -67,8 +68,10 @@ export class PaymentController {
         externalReceipt?.sha256 ?? null
       );
       if (existing) {
-        res.status(200).json({
-          message: 'La operación ya estaba registrada.',
+        res.status(existing.status === 'PENDING' || existing.status === 'PROCESSING' ? 202 : 200).json({
+          message: existing.status === 'FAILED'
+            ? 'El intento fallido ya estaba registrado. Puedes iniciar un nuevo intento.'
+            : 'La operación ya estaba registrada.',
           payment: publicPayment(existing),
         });
         return;
@@ -78,35 +81,64 @@ export class PaymentController {
       if (!Number.isFinite(amount) || amount <= 0 || !/^[A-Z]{3}$/.test(order.currency.trim())) {
         throw new Error('La orden no tiene un monto final válido para pagar.');
       }
-      const confirmation = await payoutAdapter.confirm(method, reference);
-      const result = await PaymentModel.createCompleted({
+      const attempt = await PaymentModel.createAttempt({
         tenantId: req.authUser.tenantId,
         orderId,
         idempotencyKey,
         amount,
         currency: order.currency.trim(),
-        orderNumber: order.order_number,
         method,
-        reference: confirmation.reference,
+        reference: reference || null,
         userId: req.authUser.userId,
         userName: req.authUser.name,
-        paidAt: confirmation.paidAt,
         ...(externalReceipt ? { externalReceipt } : {}),
       });
-      if (result.created) {
-        dispatchPendingPaymentEvents().catch((error) =>
-          console.error('[Payment] El pago quedó registrado; el evento se reintentará desde el outbox:', error)
-        );
+      if (!attempt.created) {
+        res.status(attempt.payment.status === 'PENDING' || attempt.payment.status === 'PROCESSING' ? 202 : 200).json({
+          message: attempt.payment.status === 'FAILED'
+            ? 'El intento fallido ya estaba registrado. Puedes iniciar un nuevo intento.'
+            : 'La operación ya estaba registrada.',
+          payment: publicPayment(attempt.payment),
+        });
+        return;
       }
-      res.status(result.created ? 201 : 200).json({
-        message: result.created ? 'Pago registrado y comprobante guardado.' : 'La operación ya estaba registrada.',
-        payment: publicPayment(result.payment),
+
+      const payout = await attemptPayout(payoutAdapter, method, reference);
+      if (payout.status === 'FAILED') {
+        const failedPayment = await PaymentModel.failAttempt(
+          req.authUser.tenantId,
+          attempt.payment.id,
+          payout.failureReason
+        );
+        dispatchPendingPaymentEvents().catch((error) =>
+          console.error('[Payment] El fallo quedó registrado; PaymentFailed se reintentará desde el outbox:', error)
+        );
+        res.status(201).json({
+          message: 'El intento de pago falló y quedó registrado. Puedes iniciar un nuevo intento.',
+          payment: publicPayment(failedPayment),
+        });
+        return;
+      }
+
+      const completedPayment = await PaymentModel.completeAttempt(
+        req.authUser.tenantId,
+        attempt.payment.id,
+        order.order_number,
+        payout.confirmation.paidAt
+      );
+      dispatchPendingPaymentEvents().catch((error) =>
+        console.error('[Payment] El pago quedó registrado; el evento se reintentará desde el outbox:', error)
+      );
+      res.status(201).json({
+        message: 'Pago registrado y comprobante Reecicla generado.',
+        payment: publicPayment(completedPayment),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No se pudo registrar el pago.';
       const status = message.includes('autenticado') ? 401 :
         message.includes('no está habilitada') || message.includes('no tiene un pago') ||
         message.includes('ya tiene un pago') || message.includes('idempotencia') ||
+        message.includes('intento de pago en proceso') ||
         message.includes('monto o moneda') ? 409 :
         message.includes('Orders no está disponible') || message.includes('validar la orden') ? 503 :
         message.includes('no existe o no está disponible') ? 404 :

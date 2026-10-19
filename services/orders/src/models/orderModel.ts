@@ -5,6 +5,7 @@ import {
   DomainEvent,
   InspectionCompletedPayload,
   PaymentCompletedPayload,
+  PaymentFailedPayload,
   QuoteAcceptedPayload,
 } from '../types/orders';
 import { validateQuoteAcceptedEvent } from '../domain/quoteAccepted';
@@ -143,6 +144,42 @@ export class OrderModel {
       );
       if (updated.rowCount === 0) {
         throw new Error('La orden cambió de estado mientras se procesaba el pago.');
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  static async processPaymentFailedEvent(
+    event: DomainEvent<PaymentFailedPayload>
+  ): Promise<void> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const processed = await client.query(
+        `INSERT INTO processed_events (event_id, event_type, tenant_id, correlation_id)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (event_id) DO NOTHING
+         RETURNING event_id`,
+        [event.event_id, event.event_type, event.tenant_id, event.correlation_id]
+      );
+      if (processed.rowCount === 0) {
+        await client.query('COMMIT');
+        return;
+      }
+
+      const order = await client.query<{ status: string }>(
+        `SELECT status FROM orders
+         WHERE id = $1 AND tenant_id = $2
+         FOR UPDATE`,
+        [event.payload.order_id, event.tenant_id]
+      );
+      if (!order.rows[0] || !['PAYMENT_PENDING', 'PAID'].includes(order.rows[0].status)) {
+        throw new Error('La orden no está disponible para registrar el fallo de pago.');
       }
       await client.query('COMMIT');
     } catch (error) {

@@ -37,6 +37,11 @@ Ecosistema de microservicios independientes construidos con **Node.js**, **TypeS
 - Al completar una inspección de reventa sin cambio de condición, Orders confirma el precio de cotización ya aceptado y deja la orden en `PAYMENT_PENDING`; con cambio de condición, espera la aceptación del precio ajustado.
 - Los archivos se guardan en almacenamiento privado y solo se descargan mediante rutas autenticadas para el cliente dueño de la orden o el administrador del negocio.
 
+### HU-020 — Reintentos de pago
+- Cada intento queda como un registro independiente con su propia clave de idempotencia. Si el adaptador de pago falla, se conserva como `FAILED`, se registra el motivo y Payment publica `PaymentFailed` desde su outbox.
+- Se puede iniciar un nuevo intento mientras la orden siga pendiente; los intentos `FAILED` no impiden reintentar. Un intento `PENDING` evita solicitudes simultáneas y el índice único parcial mantiene un solo pago `COMPLETED` por orden y negocio.
+- El operador ve los intentos y sus motivos en Logística; tras un fallo, el botón permite iniciar un nuevo intento. El cliente puede consultar el estado en su historial.
+
 ---
 
 ## 🔒 Control de Acceso Basado en Roles (RBAC)
@@ -123,7 +128,7 @@ docker compose exec -T quotation-db psql -U reecicla_user -d reecicla_quotation_
   < reecicla-backend/services/quotation/db/10-anonymous-quotes.sql
 ```
 
-Para actualizar una base de Payment ya creada al esquema de comprobantes internos generados por Reecicla, ejecuta desde la carpeta `Reecicla`:
+Para actualizar o poner al día una base de Payment ya creada (incluido el soporte de pagos fallidos sin comprobante interno), vuelve a ejecutar desde la carpeta `Reecicla`:
 
 ```bash
 docker compose exec -T payment-db psql -U reecicla_user -d reecicla_payment_db \

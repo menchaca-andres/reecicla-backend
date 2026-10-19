@@ -27,6 +27,7 @@ export interface Payment {
   method: PaymentMethod;
   status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
   reference: string | null;
+  failure_reason?: string | null;
   paid_by_user_id: string;
   paid_by_user_name?: string | null;
   paid_at: string | null;
@@ -48,6 +49,16 @@ export interface PaymentCompletedPayload {
   reference: string | null;
   paid_by_user_id: string;
   paid_at: string;
+}
+
+export interface PaymentFailedPayload {
+  payment_id: string;
+  order_id: string;
+  amount: number;
+  currency: string;
+  method: PaymentMethod;
+  failure_reason: string;
+  failed_at: string;
 }
 
 export interface DomainEvent<T> {

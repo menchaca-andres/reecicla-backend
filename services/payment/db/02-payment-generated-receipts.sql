@@ -26,4 +26,10 @@ ALTER TABLE payments
     ADD COLUMN IF NOT EXISTS internal_receipt_path TEXT,
     ADD COLUMN IF NOT EXISTS internal_receipt_mime_type VARCHAR(100),
     ADD COLUMN IF NOT EXISTS internal_receipt_sha256 CHAR(64),
-    ADD COLUMN IF NOT EXISTS paid_by_user_name VARCHAR(255);
+    ADD COLUMN IF NOT EXISTS paid_by_user_name VARCHAR(255),
+    ADD COLUMN IF NOT EXISTS failure_reason TEXT;
+
+ALTER TABLE payments
+    ALTER COLUMN internal_receipt_path DROP NOT NULL,
+    ALTER COLUMN internal_receipt_mime_type DROP NOT NULL,
+    ALTER COLUMN internal_receipt_sha256 DROP NOT NULL;

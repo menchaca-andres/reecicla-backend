@@ -4,18 +4,20 @@ import {
   AdjustedQuoteEventPayload,
   DomainEvent,
   InspectionCompletedPayload,
+  PaymentFailedPayload,
   QuoteAcceptedPayload,
 } from '../types/orders';
 import { validateInspectionCompletedEvent } from '../domain/inspectionCompleted';
 import { validateQuoteAcceptedEvent } from '../domain/quoteAccepted';
 import { validateAdjustedQuoteEvent } from '../domain/adjustedQuoteEvent';
 import { validatePaymentCompletedEvent } from '../domain/paymentCompletedEvent';
+import { validatePaymentFailedEvent } from '../domain/paymentFailedEvent';
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://reecicla:reecicla_password@localhost:5672';
 const EXCHANGE = 'reecicla.events';
 const QUEUE = 'orders.quote-accepted.queue';
 const INSPECTION_COMPLETED_QUEUE = 'orders.inspection-completed.queue';
-const PAYMENT_COMPLETED_QUEUE = 'orders.payment-completed.queue';
+const PAYMENT_EVENTS_QUEUE = 'orders.payment-completed.queue';
 
 let connection: ChannelModel | null = null;
 let channel: Channel | null = null;
@@ -133,28 +135,39 @@ export async function startInspectionCompletedConsumer(): Promise<void> {
 
 export async function startPaymentCompletedConsumer(): Promise<void> {
   const activeChannel = await connect();
-  await activeChannel.assertQueue(PAYMENT_COMPLETED_QUEUE, { durable: true });
-  await activeChannel.bindQueue(PAYMENT_COMPLETED_QUEUE, EXCHANGE, 'payment.completed');
-  await activeChannel.consume(PAYMENT_COMPLETED_QUEUE, async (message: ConsumeMessage | null) => {
+  await activeChannel.assertQueue(PAYMENT_EVENTS_QUEUE, { durable: true });
+  await activeChannel.bindQueue(PAYMENT_EVENTS_QUEUE, EXCHANGE, 'payment.completed');
+  await activeChannel.bindQueue(PAYMENT_EVENTS_QUEUE, EXCHANGE, 'payment.failed');
+  await activeChannel.consume(PAYMENT_EVENTS_QUEUE, async (message: ConsumeMessage | null) => {
     if (!message) return;
     let event: unknown;
     try {
       event = JSON.parse(message.content.toString()) as unknown;
     } catch (error) {
-      console.error('[Orders] Mensaje PaymentCompleted con JSON inválido descartado:', error);
+      console.error('[Orders] Evento de pago con JSON inválido descartado:', error);
       activeChannel.ack(message);
       return;
     }
     try {
-      validatePaymentCompletedEvent(event);
-      await OrderModel.processPaymentCompletedEvent(event);
+      if (
+        typeof event === 'object' &&
+        event !== null &&
+        'event_type' in event &&
+        event.event_type === 'PaymentFailed'
+      ) {
+        validatePaymentFailedEvent(event);
+        await OrderModel.processPaymentFailedEvent(event);
+      } else {
+        validatePaymentCompletedEvent(event);
+        await OrderModel.processPaymentCompletedEvent(event);
+      }
       activeChannel.ack(message);
     } catch (error) {
-      console.error('[Orders] Error procesando PaymentCompleted; se reintentará:', error);
+      console.error('[Orders] Error procesando evento de pago; se reintentará:', error);
       activeChannel.nack(message, false, true);
     }
   });
-  console.log(`[Orders] Escuchando ${PAYMENT_COMPLETED_QUEUE} para payment.completed.`);
+  console.log(`[Orders] Escuchando ${PAYMENT_EVENTS_QUEUE} para payment.completed y payment.failed.`);
 }
 
 export async function closeQuoteAcceptedConsumer(): Promise<void> {

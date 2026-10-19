@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'crypto';
 import { mkdir, unlink, writeFile } from 'fs/promises';
 import path from 'path';
 import { pool } from '../config/db';
-import { Payment, PaymentCompletedPayload, PaymentMethod } from '../types/payment';
+import { Payment, PaymentCompletedPayload, PaymentFailedPayload, PaymentMethod } from '../types/payment';
 import { generatePaymentReceipt } from '../domain/paymentReceiptGenerator';
 
 const RECEIPT_DIRECTORY = process.env.PAYMENT_RECEIPT_DIR || '/data/payment-receipts';
@@ -13,12 +13,10 @@ export interface CreatePaymentInput {
   idempotencyKey: string;
   amount: number;
   currency: string;
-  orderNumber: string;
   method: PaymentMethod;
   reference: string | null;
   userId: string;
   userName?: string;
-  paidAt: Date;
   externalReceipt?: {
     buffer: Buffer;
     mimeType: string;
@@ -27,7 +25,7 @@ export interface CreatePaymentInput {
   };
 }
 
-export interface CreatePaymentResult {
+export interface PaymentAttemptResult {
   payment: Payment;
   created: boolean;
 }
@@ -59,7 +57,7 @@ export class PaymentModel {
     return payment;
   }
 
-  static async createCompleted(input: CreatePaymentInput): Promise<CreatePaymentResult> {
+  static async createAttempt(input: CreatePaymentInput): Promise<PaymentAttemptResult> {
     const client = await pool.connect();
     const writtenPaths: string[] = [];
     try {
@@ -102,29 +100,23 @@ export class PaymentModel {
         throw new Error('La orden ya tiene un pago completado.');
       }
 
+      const pending = await client.query(
+        `SELECT id FROM payments
+         WHERE tenant_id = $1 AND order_id = $2
+           AND status IN ('PENDING', 'PROCESSING')
+         LIMIT 1`,
+        [input.tenantId, input.orderId]
+      );
+      if (pending.rows[0]) {
+        throw new Error('Ya hay un intento de pago en proceso para esta orden.');
+      }
+
       const paymentId = randomUUID();
-      const eventId = randomUUID();
-      await mkdir(RECEIPT_DIRECTORY, { recursive: true });
-      const internalReceipt = await generatePaymentReceipt({
-        paymentId,
-        tenantId: input.tenantId,
-        orderNumber: input.orderNumber,
-        amount: input.amount,
-        currency: input.currency,
-        method: input.method,
-        reference: input.reference,
-        paidByUserId: input.userId,
-        paidByUserName: input.userName,
-        paidAt: input.paidAt,
-      });
-      const internalReceiptPath = path.join(RECEIPT_DIRECTORY, `${paymentId}.pdf`);
-      await writeFile(internalReceiptPath, internalReceipt, { flag: 'wx', mode: 0o600 });
-      writtenPaths.push(internalReceiptPath);
-      const internalReceiptSha256 = createHash('sha256').update(internalReceipt).digest('hex');
       const externalReceiptPath = input.externalReceipt
         ? path.join(RECEIPT_DIRECTORY, `${paymentId}-evidence.${input.externalReceipt.extension}`)
         : null;
       if (externalReceiptPath && input.externalReceipt) {
+        await mkdir(RECEIPT_DIRECTORY, { recursive: true });
         await writeFile(externalReceiptPath, input.externalReceipt.buffer, { flag: 'wx', mode: 0o600 });
         writtenPaths.push(externalReceiptPath);
       }
@@ -132,11 +124,9 @@ export class PaymentModel {
       const inserted = await client.query<Payment>(
         `INSERT INTO payments (
            id, tenant_id, order_id, idempotency_key, amount, currency,
-           method, status, reference, internal_receipt_path, internal_receipt_mime_type,
-           internal_receipt_sha256, external_receipt_path, external_receipt_mime_type,
+           method, status, reference, external_receipt_path, external_receipt_mime_type,
            external_receipt_sha256, paid_by_user_id, paid_by_user_name, paid_at
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'COMPLETED', $8, $9, 'application/pdf',
-                   $10, $11, $12, $13, $14, $15, $16)
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'PENDING', $8, $9, $10, $11, $12, $13, NULL)
          RETURNING *`,
         [
           paymentId,
@@ -147,35 +137,15 @@ export class PaymentModel {
           input.currency,
           input.method,
           input.reference,
-          internalReceiptPath,
-          internalReceiptSha256,
           externalReceiptPath,
           input.externalReceipt?.mimeType ?? null,
           input.externalReceipt?.sha256 ?? null,
           input.userId,
           input.userName ?? null,
-          input.paidAt,
         ]
       );
-      const payment = inserted.rows[0];
-      const payload: PaymentCompletedPayload = {
-        payment_id: payment.id,
-        order_id: payment.order_id,
-        amount: Number(payment.amount),
-        currency: payment.currency.trim(),
-        method: payment.method,
-        reference: payment.reference,
-        paid_by_user_id: payment.paid_by_user_id,
-        paid_at: payment.paid_at ?? new Date().toISOString(),
-      };
-      await client.query(
-        `INSERT INTO payment_event_outbox (
-           event_id, tenant_id, aggregate_id, correlation_id, event_type, routing_key, payload
-         ) VALUES ($1, $2, $3, $4, 'PaymentCompleted', 'payment.completed', $5)`,
-        [eventId, input.tenantId, payment.id, input.orderId, JSON.stringify(payload)]
-      );
       await client.query('COMMIT');
-      return { payment, created: true };
+      return { payment: inserted.rows[0], created: true };
     } catch (error) {
       await client.query('ROLLBACK').catch(() => undefined);
       await Promise.all(writtenPaths.map((filePath) =>
@@ -197,10 +167,178 @@ export class PaymentModel {
     }
   }
 
+  static async completeAttempt(
+    tenantId: string,
+    paymentId: string,
+    orderNumber: string,
+    paidAt: Date
+  ): Promise<Payment> {
+    const client = await pool.connect();
+    let receiptPath: string | null = null;
+    try {
+      await client.query('BEGIN');
+      const selected = await client.query<Payment>(
+        `SELECT * FROM payments
+         WHERE tenant_id = $1 AND id = $2
+         FOR UPDATE`,
+        [tenantId, paymentId]
+      );
+      const payment = selected.rows[0];
+      if (!payment) throw new Error('El intento de pago no existe.');
+      if (payment.status === 'COMPLETED') {
+        await client.query('COMMIT');
+        return payment;
+      }
+      if (payment.status !== 'PENDING' && payment.status !== 'PROCESSING') {
+        throw new Error('El intento de pago ya no puede completarse.');
+      }
+
+      await client.query(
+        'SELECT pg_advisory_xact_lock(hashtext($1))',
+        [`completed-order:${tenantId}:${payment.order_id}`]
+      );
+      const completed = await client.query(
+        `SELECT id FROM payments
+         WHERE tenant_id = $1 AND order_id = $2 AND status = 'COMPLETED'
+         LIMIT 1`,
+        [tenantId, payment.order_id]
+      );
+      if (completed.rows[0] && completed.rows[0].id !== paymentId) {
+        throw new Error('La orden ya tiene un pago completado.');
+      }
+
+      const internalReceipt = await generatePaymentReceipt({
+        paymentId: payment.id,
+        tenantId: payment.tenant_id,
+        orderNumber,
+        amount: Number(payment.amount),
+        currency: payment.currency.trim(),
+        method: payment.method,
+        reference: payment.reference,
+        paidByUserId: payment.paid_by_user_id,
+        paidByUserName: payment.paid_by_user_name ?? undefined,
+        paidAt,
+      });
+      await mkdir(RECEIPT_DIRECTORY, { recursive: true });
+      receiptPath = path.join(RECEIPT_DIRECTORY, `${payment.id}.pdf`);
+      await writeFile(receiptPath, internalReceipt, { flag: 'wx', mode: 0o600 });
+      const internalReceiptSha256 = createHash('sha256').update(internalReceipt).digest('hex');
+      const updated = await client.query<Payment>(
+        `UPDATE payments
+         SET status = 'COMPLETED',
+             failure_reason = NULL,
+             internal_receipt_path = $1,
+             internal_receipt_mime_type = 'application/pdf',
+             internal_receipt_sha256 = $2,
+             paid_at = $3,
+             updated_at = NOW()
+         WHERE tenant_id = $4 AND id = $5
+         RETURNING *`,
+        [receiptPath, internalReceiptSha256, paidAt, tenantId, paymentId]
+      );
+      const completedPayment = updated.rows[0];
+      const payload: PaymentCompletedPayload = {
+        payment_id: completedPayment.id,
+        order_id: completedPayment.order_id,
+        amount: Number(completedPayment.amount),
+        currency: completedPayment.currency.trim(),
+        method: completedPayment.method,
+        reference: completedPayment.reference,
+        paid_by_user_id: completedPayment.paid_by_user_id,
+        paid_at: completedPayment.paid_at ?? paidAt.toISOString(),
+      };
+      await client.query(
+        `INSERT INTO payment_event_outbox (
+           event_id, tenant_id, aggregate_id, correlation_id, event_type, routing_key, payload
+         ) VALUES ($1, $2, $3, $4, 'PaymentCompleted', 'payment.completed', $5)`,
+        [randomUUID(), tenantId, paymentId, payment.order_id, JSON.stringify(payload)]
+      );
+      await client.query('COMMIT');
+      return completedPayment;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      if (receiptPath) {
+        await unlink(receiptPath).catch((cleanupError) =>
+          console.error('[Payment] No se pudo eliminar un comprobante generado temporal:', cleanupError)
+        );
+      }
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        error.code === '23505'
+      ) {
+        throw new Error('La orden ya tiene un pago completado.');
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  static async failAttempt(
+    tenantId: string,
+    paymentId: string,
+    failureReason: string
+  ): Promise<Payment> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const selected = await client.query<Payment>(
+        `SELECT * FROM payments
+         WHERE tenant_id = $1 AND id = $2
+         FOR UPDATE`,
+        [tenantId, paymentId]
+      );
+      const payment = selected.rows[0];
+      if (!payment) throw new Error('El intento de pago no existe.');
+      if (payment.status === 'FAILED') {
+        await client.query('COMMIT');
+        return payment;
+      }
+      if (payment.status !== 'PENDING' && payment.status !== 'PROCESSING') {
+        throw new Error('El intento de pago ya fue procesado.');
+      }
+
+      const failedAt = new Date();
+      const reason = failureReason.slice(0, 500);
+      const updated = await client.query<Payment>(
+        `UPDATE payments
+         SET status = 'FAILED', failure_reason = $1, updated_at = NOW()
+         WHERE tenant_id = $2 AND id = $3
+         RETURNING *`,
+        [reason, tenantId, paymentId]
+      );
+      const failedPayment = updated.rows[0];
+      const payload: PaymentFailedPayload = {
+        payment_id: failedPayment.id,
+        order_id: failedPayment.order_id,
+        amount: Number(failedPayment.amount),
+        currency: failedPayment.currency.trim(),
+        method: failedPayment.method,
+        failure_reason: reason,
+        failed_at: failedAt.toISOString(),
+      };
+      await client.query(
+        `INSERT INTO payment_event_outbox (
+           event_id, tenant_id, aggregate_id, correlation_id, event_type, routing_key, payload
+         ) VALUES ($1, $2, $3, $4, 'PaymentFailed', 'payment.failed', $5)`,
+        [randomUUID(), tenantId, paymentId, failedPayment.order_id, JSON.stringify(payload)]
+      );
+      await client.query('COMMIT');
+      return failedPayment;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   static async findForOrder(tenantId: string, orderId: string): Promise<Payment[]> {
     const { rows } = await pool.query<Payment>(
       `SELECT id, tenant_id, order_id, amount, currency, method, status,
-              reference, paid_by_user_id, paid_at, created_at,
+              reference, failure_reason, paid_by_user_id, paid_by_user_name, paid_at, created_at,
               internal_receipt_path, internal_receipt_mime_type,
               external_receipt_path, external_receipt_mime_type
        FROM payments
@@ -214,7 +352,7 @@ export class PaymentModel {
   static async findForTenant(tenantId: string): Promise<Payment[]> {
     const { rows } = await pool.query<Payment>(
       `SELECT id, tenant_id, order_id, amount, currency, method, status,
-              reference, paid_by_user_id, paid_at, created_at,
+              reference, failure_reason, paid_by_user_id, paid_by_user_name, paid_at, created_at,
               internal_receipt_path, internal_receipt_mime_type,
               external_receipt_path, external_receipt_mime_type
        FROM payments
@@ -240,6 +378,9 @@ export class PaymentModel {
   }
 
   static async ensureInternalReceipt(payment: Payment, orderNumber: string): Promise<Payment> {
+    if (payment.status !== 'COMPLETED') {
+      throw new Error('Solo los pagos completados tienen comprobante Reecicla.');
+    }
     if (payment.internal_receipt_path && payment.internal_receipt_mime_type) return payment;
     const receipt = await generatePaymentReceipt({
       paymentId: payment.id,
