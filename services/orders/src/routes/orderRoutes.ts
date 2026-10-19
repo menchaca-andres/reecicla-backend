@@ -7,6 +7,7 @@ const router = Router();
 const logisticsRoles = ['TENANT_ADMIN', 'SUPER_ADMIN', 'INSPECTOR'];
 
 router.post('/internal/adjusted-quote/authorize', authenticateInternalService, OrderController.authorizeAdjustedQuoteResponse);
+router.post('/internal/payments/authorize', authenticateInternalService, OrderController.authorizePayment);
 router.post('/tracking/:token/adjustment-resolution', OrderController.resolveAdjustmentAsGuest);
 router.get('/tracking/:token', OrderController.track);
 router.get('/admin/all', authenticateToken, authorizeRoles(...logisticsRoles), OrderController.listAll);

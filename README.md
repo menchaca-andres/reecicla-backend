@@ -30,6 +30,18 @@ Ecosistema de microservicios independientes construidos con **Node.js**, **TypeS
 - **Catalog DB** (`reecicla-catalog-db`): Puerto `5434`
 - **Orders DB** (`reecicla-orders-db`): Puerto `5433`
 
+### 5. Payment Service (HU-019)
+- **Puerto interno**: `3006` | **Base de Datos**: `reecicla_payment_db` (`localhost:5437`, solo local)
+- **Responsabilidad**: Registrar transferencias o cheques ejecutados por el administrador del negocio, guardar comprobantes en almacenamiento privado y publicar el evento `PaymentCompleted` para actualizar la orden a `PAID`.
+- El importe se obtiene de `final_price` en Orders; el cliente no puede enviarlo. `Idempotency-Key` evita duplicar un pago. Payment genera automáticamente un comprobante PDF de Reecicla; el operador puede adjuntar opcionalmente evidencia bancaria PDF, JPG o PNG (máximo 5 MB).
+- Al completar una inspección de reventa sin cambio de condición, Orders confirma el precio de cotización ya aceptado y deja la orden en `PAYMENT_PENDING`; con cambio de condición, espera la aceptación del precio ajustado.
+- Los archivos se guardan en almacenamiento privado y solo se descargan mediante rutas autenticadas para el cliente dueño de la orden o el administrador del negocio.
+
+### HU-020 — Reintentos de pago
+- Cada intento queda como un registro independiente con su propia clave de idempotencia. Si el adaptador de pago falla, se conserva como `FAILED`, se registra el motivo y Payment publica `PaymentFailed` desde su outbox.
+- Se puede iniciar un nuevo intento mientras la orden siga pendiente; los intentos `FAILED` no impiden reintentar. Un intento `PENDING` evita solicitudes simultáneas y el índice único parcial mantiene un solo pago `COMPLETED` por orden y negocio.
+- El operador ve los intentos y sus motivos en Logística; tras un fallo, el botón permite iniciar un nuevo intento. El cliente puede consultar el estado en su historial.
+
 ---
 
 ## 🔒 Control de Acceso Basado en Roles (RBAC)
@@ -63,6 +75,12 @@ Prefijo de negocio: `/recicla/{slug}/…`
 
 ### Catálogo y órdenes
 - `/recicla/{slug}/catalog/…` y `/recicla/{slug}/orders/…` usan el mismo header de tenant.
+
+### Pagos
+- `POST /recicla/{slug}/api/payments/orders/:orderId` ➔ Registrar pago como `TENANT_ADMIN` con `method` (`BANK_TRANSFER` o `CHECK`), `reference`, archivo `receipt` y header `Idempotency-Key`.
+- `GET /recicla/{slug}/api/payments/orders/:orderId` ➔ Consultar pagos de una orden propia como cliente o como administrador del negocio.
+- `GET /recicla/{slug}/api/payments/orders/:orderId/:paymentId/receipt` ➔ Descargar el comprobante PDF de Reecicla con autorización de orden.
+- `GET /recicla/{slug}/api/payments/orders/:orderId/:paymentId/external-receipt` ➔ Descargar la evidencia bancaria opcional con autorización de orden.
 
 ---
 
@@ -110,6 +128,16 @@ docker compose exec -T quotation-db psql -U reecicla_user -d reecicla_quotation_
   < reecicla-backend/services/quotation/db/10-anonymous-quotes.sql
 ```
 
+Para actualizar o poner al día una base de Payment ya creada (incluido el soporte de pagos fallidos sin comprobante interno), vuelve a ejecutar desde la carpeta `Reecicla`:
+
+```bash
+docker compose exec -T payment-db psql -U reecicla_user -d reecicla_payment_db \
+  -v ON_ERROR_STOP=1 \
+  < reecicla-backend/services/payment/db/02-payment-generated-receipts.sql
+```
+
+La migración conserva los comprobantes cargados anteriormente como evidencia bancaria opcional; los comprobantes internos de los pagos existentes se generan al descargarlos por primera vez.
+
 Los comandos se ejecutan desde la carpeta `Reecicla`, donde está `docker-compose.yml`. Las bases existentes requieren ejecutar cada migración una vez; los scripts de inicialización de Compose solo se ejecutan al crear una base vacía. Antes del primer inicio, copia `.env.example` a `.env` y define ambos valores como secretos aleatorios, distintos entre sí. No compartas el archivo `.env`.
 
 ```bash
@@ -151,3 +179,4 @@ Para administrar las bases de datos desde pgAdmin 4 o DBeaver:
 
 - **Auth DB**: `localhost:5431` | BD: `reecicla_auth_db` | User: `reecicla_user` | Pass: `reecicla_password`
 - **Quotation DB**: `localhost:5435` | BD: `reecicla_quotation_db` | User: `reecicla_user` | Pass: `reecicla_password`
+- **Payment DB**: `localhost:5437` | BD: `reecicla_payment_db` | User: `reecicla_user` | Pass: `reecicla_password`

@@ -4,6 +4,40 @@ import { OrderModel } from '../models/orderModel';
 import { dispatchPendingOrderEvents } from '../messaging/eventPublisher';
 
 export class OrderController {
+  static async authorizePayment(req: Request, res: Response): Promise<void> {
+    const { order_id, tenant_id, user_id, action } = req.body ?? {};
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (
+      typeof order_id !== 'string' ||
+      !uuidPattern.test(order_id) ||
+      typeof tenant_id !== 'string' ||
+      !uuidPattern.test(tenant_id) ||
+      (user_id !== undefined && typeof user_id !== 'string') ||
+      (user_id !== undefined && !uuidPattern.test(user_id)) ||
+      (action !== 'PAY' && action !== 'READ')
+    ) {
+      res.status(400).json({ error: 'La solicitud de autorización de pago está incompleta.' });
+      return;
+    }
+    try {
+      const order = await OrderModel.authorizePayment(
+        order_id,
+        tenant_id,
+        user_id,
+        action
+      );
+      if (!order) {
+        res.status(404).json({ error: 'La orden no existe o no está disponible para esta operación.' });
+        return;
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(200).json({ order });
+    } catch (error) {
+      console.error('[Orders] Error autorizando operación de pago:', error);
+      res.status(500).json({ error: 'No se pudo validar la orden para el pago.' });
+    }
+  }
+
   static async authorizeAdjustedQuoteResponse(req: Request, res: Response): Promise<void> {
     const trackingToken = req.body?.tracking_token;
     const parentQuoteId = req.body?.parent_quote_id;
