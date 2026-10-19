@@ -78,6 +78,7 @@ export interface InactivityCandidate {
   code: string;
   name: string;
   last_received_at: string | null;
+  inactivity_since: string;
   months_inactive: number;
   has_active_dependencies: boolean;
   can_deactivate: boolean;
@@ -106,4 +107,3 @@ export interface InactivityMaintenanceResult {
   executed_by: string;
   executed_at: string;
 }
-

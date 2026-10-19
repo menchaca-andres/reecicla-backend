@@ -62,6 +62,7 @@ Prefijo de negocio: `/recicla/{slug}/…`
 
 ### Catálogo y órdenes
 - `/recicla/{slug}/catalog/…` y `/recicla/{slug}/orders/…` usan el mismo header de tenant.
+- HU-023 avisa por correo a los administradores 24 horas antes de la desactivación automática. La ejecución siempre verifica con Orders que no haya stock ni pedidos activos; si Orders no responde, no se desactiva nada.
 
 ---
 
@@ -107,6 +108,17 @@ docker compose exec -T orders-db psql -U reecicla_user -d reecicla_orders_db \
 docker compose exec -T quotation-db psql -U reecicla_user -d reecicla_quotation_db \
   -v ON_ERROR_STOP=1 \
   < reecicla-backend/services/quotation/db/10-anonymous-quotes.sql
+```
+
+Para actualizar una base Catalog existente con el control de avisos previos de HU-023:
+
+```bash
+docker compose exec -T catalog-db psql -U reecicla_user -d reecicla_catalog_db \
+  -v ON_ERROR_STOP=1 \
+  < reecicla-backend/services/catalog/db/07-catalog-inactivity-audit.sql
+docker compose exec -T catalog-db psql -U reecicla_user -d reecicla_catalog_db \
+  -v ON_ERROR_STOP=1 \
+  < reecicla-backend/services/catalog/db/09-catalog-inactivity-warning.sql
 ```
 
 Los comandos se ejecutan desde la carpeta `Reecicla`, donde está `docker-compose.yml`. Las bases existentes requieren ejecutar cada migración una vez; los scripts de inicialización de Compose solo se ejecutan al crear una base vacía. Antes del primer inicio, copia `.env.example` a `.env` y define ambos valores como secretos aleatorios, distintos entre sí. No compartas el archivo `.env`.

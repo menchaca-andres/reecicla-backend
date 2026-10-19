@@ -247,21 +247,30 @@ export class AuthController {
         [tenant_id]
       );
       if (client.rows.length === 0) {
-        res.status(200).json({ message: 'No hay administradores registrados para este tenant.' });
+        res.status(503).json({ error: 'No hay administradores registrados para recibir el aviso de mantenimiento.' });
         return;
       }
+      let sentCount = 0;
       for (const admin of client.rows) {
         try {
           await EmailService.sendCatalogMaintenanceSummary(admin.email, admin.name || 'Administrador', summary);
+          sentCount++;
         } catch (emailErr) {
           console.error(`[Auth] Error enviando email de mantenimiento a ${admin.email}:`, emailErr);
         }
       }
-      res.status(200).json({ message: 'Notificaciones de mantenimiento enviadas a los administradores.' });
+      if (sentCount === 0) {
+        res.status(503).json({ error: 'No se pudo enviar el aviso de mantenimiento a ningún administrador.' });
+        return;
+      }
+      res.status(200).json({
+        message: 'Notificaciones de mantenimiento enviadas.',
+        sent_count: sentCount,
+        admin_count: client.rows.length,
+      });
     } catch (error: any) {
       console.error('[Auth] Error procesando notificación de mantenimiento:', error);
       res.status(500).json({ error: error.message || 'Error procesando notificación de mantenimiento.' });
     }
   }
 }
-

@@ -84,10 +84,26 @@ export class EmailService {
       blockedItems: Array<{ code: string; name: string; alert: string }>;
       executedBy: string;
       executedAt: string;
-    }
+    } & (
+      | { phase: 'WARNING'; eligibleAfter: string }
+      | { phase?: 'COMPLETED'; eligibleAfter?: undefined }
+    )
   ): Promise<void> {
     const { from, transporter } = EmailService.createTransporter();
     const safeName = escapeHtml(adminName);
+    const isWarning = summary.phase === 'WARNING';
+    const subject = isWarning
+      ? '[Reecicla] Aviso previo de inactividad de catálogo (HU-023)'
+      : '[Reecicla] Resumen de Mantenimiento de Catálogo (HU-023)';
+    const actionText = isWarning
+      ? `Los tipos listados podrían desactivarse automáticamente después del ${new Date(summary.eligibleAfter).toLocaleString()}, si continúan sin actividad y no tienen dependencias activas.`
+      : 'Se ha ejecutado el proceso de revisión y desactivación de tipos de equipos sin recepciones en los últimos 12 meses.';
+    const summaryRows = isWarning
+      ? `<strong>Tipos con aviso previo:</strong> <span style="color:#b45309;font-weight:bold;">${summary.deactivatedItems.length}</span><br/>`
+      : `<strong>Total desactivados por inactividad:</strong> <span style="color:#b91c1c;font-weight:bold;">${summary.totalDeactivated}</span><br/>`;
+    const summaryTableHeader = isWarning
+      ? 'Tipos que requieren revisión'
+      : 'Tipos de Equipo';
     const rowsHtml = summary.deactivatedItems.length > 0
       ? summary.deactivatedItems.map(item => `
           <tr>
@@ -110,23 +126,23 @@ export class EmailService {
     await transporter.sendMail({
       from,
       to: email,
-      subject: `[Reecicla] Resumen de Mantenimiento de Catálogo (HU-023)`,
-      text: `Hola ${adminName}, se ejecutó el proceso de mantenimiento de catálogo (HU-023). Tipos desactivados por inactividad: ${summary.totalDeactivated}.`,
+      subject,
+      text: `Hola ${adminName}, ${actionText}`,
       html: `
         <div style="font-family:sans-serif;max-width:600px;margin:0 auto;color:#1e293b;">
-          <h2 style="color:#0f172a;border-bottom:2px solid #e2e8f0;padding-bottom:8px;">Resumen de Mantenimiento de Catálogo (HU-023)</h2>
+          <h2 style="color:#0f172a;border-bottom:2px solid #e2e8f0;padding-bottom:8px;">${isWarning ? 'Aviso previo de inactividad de catálogo' : 'Resumen de Mantenimiento de Catálogo'} (HU-023)</h2>
           <p>Hola <strong>${safeName}</strong>,</p>
-          <p>Se ha ejecutado el proceso de revisión y desactivación de tipos de equipos sin recepciones en los últimos 12 meses.</p>
+          <p>${escapeHtml(actionText)}</p>
           <p style="background:#f8fafc;padding:10px;border-radius:6px;border:1px solid #e2e8f0;">
             <strong>Ejecutado por:</strong> ${escapeHtml(summary.executedBy)}<br/>
             <strong>Fecha de ejecución:</strong> ${new Date(summary.executedAt).toLocaleString()}<br/>
-            <strong>Total desactivados por inactividad:</strong> <span style="color:#b91c1c;font-weight:bold;">${summary.totalDeactivated}</span><br/>
+            ${summaryRows}
             <strong>Total protegidos por dependencias activas:</strong> <span style="color:#166534;font-weight:bold;">${summary.totalBlocked}</span>
           </p>
           <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:13px;">
             <thead>
               <tr style="background:#f1f5f9;">
-                <th style="padding:8px;border:1px solid #ddd;text-align:left;">Tipo de Equipo</th>
+                <th style="padding:8px;border:1px solid #ddd;text-align:left;">${summaryTableHeader}</th>
                 <th style="padding:8px;border:1px solid #ddd;text-align:left;">Última Recepción</th>
                 <th style="padding:8px;border:1px solid #ddd;text-align:left;">Motivo</th>
               </tr>
@@ -143,4 +159,3 @@ export class EmailService {
     });
   }
 }
-
