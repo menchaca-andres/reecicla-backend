@@ -42,6 +42,11 @@ Ecosistema de microservicios independientes construidos con **Node.js**, **TypeS
 - Se puede iniciar un nuevo intento mientras la orden siga pendiente; los intentos `FAILED` no impiden reintentar. Un intento `PENDING` evita solicitudes simultáneas y el índice único parcial mantiene un solo pago `COMPLETED` por orden y negocio.
 - El operador ve los intentos y sus motivos en Logística; tras un fallo, el botón permite iniciar un nuevo intento. El cliente puede consultar el estado en su historial.
 
+### HU-021 — Seguimiento y notificaciones
+- El cliente autenticado consulta la línea de tiempo de estados y los avisos enviados desde Mis Órdenes. El enlace privado de seguimiento muestra la misma información.
+- Orders registra el correo de enlace de seguimiento solo después del envío exitoso; los fallos se conservan y reintentan automáticamente cada minuto, sin bloquear la creación ni actualización de la orden.
+- En bases Orders existentes, aplica una vez `database/08-order-notifications.sql` desde la carpeta `Reecicla`.
+
 ---
 
 ## 🔒 Control de Acceso Basado en Roles (RBAC)
@@ -123,6 +128,9 @@ docker compose exec -T orders-db psql -U reecicla_user -d reecicla_orders_db \
 docker compose exec -T orders-db psql -U reecicla_user -d reecicla_orders_db \
   -v ON_ERROR_STOP=1 \
   -f /docker-entrypoint-initdb.d/06-orders-tracking-links.sql
+docker compose exec -T orders-db psql -U reecicla_user -d reecicla_orders_db \
+  -v ON_ERROR_STOP=1 \
+  < reecicla-backend/database/08-order-notifications.sql
 docker compose exec -T quotation-db psql -U reecicla_user -d reecicla_quotation_db \
   -v ON_ERROR_STOP=1 \
   < reecicla-backend/services/quotation/db/10-anonymous-quotes.sql

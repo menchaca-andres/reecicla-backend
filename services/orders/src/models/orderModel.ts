@@ -18,6 +18,20 @@ import { DispositionError, decideDispositionAction } from '../domain/disposition
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'crypto';
 
 const TRACKING_LINK_TTL_DAYS = 90;
+const TRACKING_LINK_NOTIFICATION = 'ORDER_TRACKING_LINK';
+
+const NOTIFICATION_HISTORY_SQL = `
+  COALESCE((
+    SELECT json_agg(json_build_object(
+      'notification_type', n.notification_type,
+      'channel', n.channel,
+      'sent_at', n.sent_at
+    ) ORDER BY n.sent_at)
+    FROM order_notifications n
+    WHERE n.order_id = o.id
+      AND n.tenant_id = o.tenant_id
+      AND n.status = 'SENT'
+  ), '[]') AS notifications`;
 
 function trackingTokenSecret(): string {
   const secret = process.env.JWT_SECRET;
@@ -56,7 +70,103 @@ async function sendTrackingLink(email: string, customerName: string, orderNumber
   }
 }
 
+async function sendAndRecordTrackingNotification(
+  tenantId: string,
+  orderId: string,
+  email: string,
+  customerName: string,
+  orderNumber: string,
+  token: string
+): Promise<void> {
+  let reservation;
+  try {
+    reservation = await pool.query<{ id: string }>(
+      `INSERT INTO order_notifications (
+         tenant_id, order_id, notification_type, recipient, status, attempt_count
+       ) VALUES ($1, $2, $3, $4, 'SENDING', 1)
+       ON CONFLICT (tenant_id, order_id, notification_type)
+       DO UPDATE SET
+         recipient = EXCLUDED.recipient,
+         status = 'SENDING',
+         attempt_count = order_notifications.attempt_count + 1,
+         last_error = NULL,
+         updated_at = NOW()
+       WHERE order_notifications.status IN ('PENDING', 'FAILED')
+          AND (order_notifications.status = 'PENDING'
+               OR order_notifications.next_attempt_at IS NULL
+               OR order_notifications.next_attempt_at <= NOW())
+          OR (order_notifications.status = 'SENDING'
+              AND order_notifications.updated_at < NOW() - INTERVAL '5 minutes')
+       RETURNING id`,
+      [tenantId, orderId, TRACKING_LINK_NOTIFICATION, email]
+    );
+  } catch (error) {
+    console.error('[Orders] No se pudo preparar el registro del correo de seguimiento:', error);
+    return;
+  }
+  if (!reservation.rows[0]) return;
+
+  try {
+    await sendTrackingLink(email, customerName, orderNumber, token);
+    await pool.query(
+      `UPDATE order_notifications
+       SET status = 'SENT', sent_at = NOW(), last_error = NULL,
+           next_attempt_at = NULL, updated_at = NOW()
+       WHERE id = $1`,
+      [reservation.rows[0].id]
+    );
+  } catch (error) {
+    const failure = error instanceof Error ? error.message : 'Error desconocido al enviar el correo.';
+    try {
+      await pool.query(
+        `UPDATE order_notifications
+         SET status = 'FAILED', last_error = $1,
+             next_attempt_at = NOW() + INTERVAL '1 minute', updated_at = NOW()
+         WHERE id = $2`,
+        [failure.slice(0, 1000), reservation.rows[0].id]
+      );
+    } catch (recordError) {
+      console.error('[Orders] No se pudo registrar el resultado del correo de seguimiento:', recordError);
+    }
+    console.error('[Orders] No se pudo enviar el correo de seguimiento; la orden permanece procesada:', error);
+  }
+}
+
 export class OrderModel {
+  static async retryFailedTrackingNotifications(): Promise<number> {
+    const { rows } = await pool.query<{
+      tenant_id: string;
+      order_id: string;
+      customer_email: string;
+      customer_name: string;
+      order_number: string;
+    }>(
+      `SELECT n.tenant_id, n.order_id, n.recipient AS customer_email,
+              o.customer_name, o.order_number
+       FROM order_notifications n
+       JOIN orders o ON o.id = n.order_id AND o.tenant_id = n.tenant_id
+       WHERE n.notification_type = $1
+         AND (
+           (n.status = 'FAILED' AND n.next_attempt_at <= NOW())
+           OR (n.status = 'SENDING' AND n.updated_at < NOW() - INTERVAL '5 minutes')
+         )
+       ORDER BY n.next_attempt_at NULLS FIRST, n.updated_at
+       LIMIT 25`,
+      [TRACKING_LINK_NOTIFICATION]
+    );
+    for (const notification of rows) {
+      await sendAndRecordTrackingNotification(
+        notification.tenant_id,
+        notification.order_id,
+        notification.customer_email,
+        notification.customer_name,
+        notification.order_number,
+        trackingToken(notification.tenant_id, notification.order_id)
+      );
+    }
+    return rows.length;
+  }
+
   static async authorizePayment(
     orderId: string,
     tenantId: string,
@@ -198,10 +308,14 @@ export class OrderModel {
     validateQuoteAcceptedEvent(event);
 
     const client = await pool.connect();
-    let trackingEmail: string;
-    let customerName: string;
-    let orderNumber: string;
     let token: string;
+    let trackingNotification: {
+      orderId: string;
+      email: string;
+      customerName: string;
+      orderNumber: string;
+      token: string;
+    } | undefined;
     try {
       await client.query('BEGIN');
       const processed = await client.query(
@@ -284,9 +398,13 @@ export class OrderModel {
           [tokenHash, TRACKING_LINK_TTL_DAYS, order.id, event.tenant_id]
         );
       }
-      trackingEmail = order.customer_email;
-      customerName = order.customer_name;
-      orderNumber = order.order_number;
+      trackingNotification = {
+        orderId: order.id,
+        email: order.customer_email,
+        customerName: order.customer_name,
+        orderNumber: order.order_number,
+        token,
+      };
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK').catch(() => undefined);
@@ -295,7 +413,17 @@ export class OrderModel {
       client.release();
     }
 
-    await sendTrackingLink(trackingEmail!, customerName!, orderNumber!, token!);
+    if (!trackingNotification) {
+      throw new Error('No se pudo preparar el correo de seguimiento de la orden.');
+    }
+    await sendAndRecordTrackingNotification(
+      event.tenant_id,
+      trackingNotification.orderId,
+      trackingNotification.email,
+      trackingNotification.customerName,
+      trackingNotification.orderNumber,
+      trackingNotification.token
+    );
   }
 
   static async completeFromInspectionEvent(
@@ -638,7 +766,8 @@ export class OrderModel {
                   'reason', h.reason,
                   'created_at', h.created_at
                 ) ORDER BY h.created_at) FILTER (WHERE h.id IS NOT NULL), '[]'
-              ) AS status_history
+              ) AS status_history,
+              ${NOTIFICATION_HISTORY_SQL}
        FROM orders o
        LEFT JOIN LATERAL (
          SELECT tracking_code, status, shipped_at
@@ -682,7 +811,8 @@ export class OrderModel {
                   'reason', h.reason,
                   'created_at', h.created_at
                 ) ORDER BY h.created_at) FILTER (WHERE h.id IS NOT NULL), '[]'
-              ) AS status_history
+              ) AS status_history,
+              ${NOTIFICATION_HISTORY_SQL}
        FROM orders o
        LEFT JOIN LATERAL (
          SELECT tracking_code, status, shipped_at
@@ -718,7 +848,8 @@ export class OrderModel {
                   'reason', h.reason,
                   'created_at', h.created_at
                 ) ORDER BY h.created_at) FILTER (WHERE h.id IS NOT NULL), '[]'
-              ) AS status_history
+              ) AS status_history,
+              ${NOTIFICATION_HISTORY_SQL}
        FROM orders o
        LEFT JOIN LATERAL (
          SELECT tracking_code, status, shipped_at
@@ -754,7 +885,8 @@ export class OrderModel {
                   'reason', h.reason,
                   'created_at', h.created_at
                 ) ORDER BY h.created_at) FILTER (WHERE h.id IS NOT NULL), '[]'
-              ) AS status_history
+              ) AS status_history,
+              ${NOTIFICATION_HISTORY_SQL}
        FROM orders o
        LEFT JOIN LATERAL (
          SELECT tracking_code, status, shipped_at

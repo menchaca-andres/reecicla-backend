@@ -69,13 +69,17 @@ test('crea una orden y un solo estado inicial frente a eventos duplicados', { sk
   const { OrderModel } = require('../dist/models/orderModel');
   const originalFetch = global.fetch;
   let trackingUrl;
+  let trackingEmailCount = 0;
   global.fetch = async (_url, options) => {
+    trackingEmailCount++;
     trackingUrl = JSON.parse(options.body).tracking_url;
     return { ok: true, status: 202, json: async () => ({ message: 'sent' }) };
   };
   const event = createEvent();
-  event.payload.user_id = null;
+  event.payload.user_id = randomUUID();
   const duplicateEvent = { ...event, event_id: randomUUID(), correlation_id: randomUUID() };
+  const failedNotificationEvent = createEvent();
+  failedNotificationEvent.payload.user_id = null;
 
   try {
     await OrderModel.createFromAcceptedQuote(event);
@@ -91,7 +95,7 @@ test('crea una orden y un solo estado inicial frente a eventos duplicados', { sk
     assert.equal(orderResult.rows[0].model, event.payload.model);
     assert.equal(orderResult.rows[0].device_year, event.payload.year);
     assert.equal(orderResult.rows[0].declared_condition, event.payload.condition);
-    assert.equal(orderResult.rows[0].user_id, null);
+    assert.equal(orderResult.rows[0].user_id, event.payload.user_id);
     assert.equal(orderResult.rows[0].customer_phone, event.payload.customer_phone);
     assert.equal(orderResult.rows[0].pickup_address.address, event.payload.pickup_address);
 
@@ -101,6 +105,13 @@ test('crea una orden y un solo estado inicial frente a eventos duplicados', { sk
     assert.equal(trackedOrder.order_number, orderResult.rows[0].order_number);
     assert.equal(trackedOrder.status, 'ACCEPTED');
     assert.equal(trackedOrder.status_history.length, 1);
+    assert.equal(trackedOrder.notifications.length, 1);
+    assert.equal(trackedOrder.notifications[0].notification_type, 'ORDER_TRACKING_LINK');
+    assert.equal(trackedOrder.notifications[0].channel, 'EMAIL');
+    assert.equal(trackingEmailCount, 1);
+    const customerOrders = await OrderModel.listForUser(event.tenant_id, event.payload.user_id);
+    const customerOrder = customerOrders.find((order) => order.id === orderResult.rows[0].id);
+    assert.equal(customerOrder.notifications.length, 1);
     assert.equal('tracking_token_hash' in trackedOrder, false);
     const invalidToken = `${token.slice(0, -1)}${token.endsWith('0') ? '1' : '0'}`;
     assert.equal(await OrderModel.getByTrackingToken(invalidToken), null);
@@ -111,14 +122,63 @@ test('crea una orden y un solo estado inicial frente a eventos duplicados', { sk
     );
     assert.equal(historyResult.rowCount, 1);
     assert.equal(historyResult.rows[0].new_status, 'ACCEPTED');
-  } finally {
-    await pool.query(
-      `DELETE FROM order_status_history WHERE tenant_id = $1 AND order_id IN
-       (SELECT id FROM orders WHERE tenant_id = $1 AND quote_id = $2)`,
-      [event.tenant_id, event.payload.quote_id]
+
+    global.fetch = async () => ({
+      ok: false,
+      status: 503,
+      json: async () => ({ error: 'SMTP no disponible durante la prueba.' }),
+    });
+    await assert.doesNotReject(OrderModel.createFromAcceptedQuote(failedNotificationEvent));
+    const failedOrder = await pool.query(
+      'SELECT id FROM orders WHERE tenant_id = $1 AND quote_id = $2',
+      [failedNotificationEvent.tenant_id, failedNotificationEvent.payload.quote_id]
     );
-    await pool.query('DELETE FROM orders WHERE tenant_id = $1 AND quote_id = $2', [event.tenant_id, event.payload.quote_id]);
-    await pool.query('DELETE FROM processed_events WHERE event_id = ANY($1::uuid[])', [[event.event_id, duplicateEvent.event_id]]);
+    assert.equal(failedOrder.rowCount, 1);
+    const failedNotification = await pool.query(
+      `SELECT status, attempt_count FROM order_notifications
+       WHERE tenant_id = $1 AND order_id = $2`,
+      [failedNotificationEvent.tenant_id, failedOrder.rows[0].id]
+    );
+    assert.equal(failedNotification.rows[0].status, 'FAILED');
+    assert.equal(failedNotification.rows[0].attempt_count, 1);
+
+    await pool.query(
+      `UPDATE order_notifications SET next_attempt_at = NOW() - INTERVAL '1 second'
+       WHERE tenant_id = $1 AND order_id = $2`,
+      [failedNotificationEvent.tenant_id, failedOrder.rows[0].id]
+    );
+    let retryEmailCount = 0;
+    global.fetch = async () => {
+      retryEmailCount++;
+      return { ok: true, status: 202, json: async () => ({ message: 'sent' }) };
+    };
+    assert.equal(await OrderModel.retryFailedTrackingNotifications(), 1);
+    const retriedNotification = await pool.query(
+      `SELECT status, attempt_count FROM order_notifications
+       WHERE tenant_id = $1 AND order_id = $2`,
+      [failedNotificationEvent.tenant_id, failedOrder.rows[0].id]
+    );
+    assert.equal(retriedNotification.rows[0].status, 'SENT');
+    assert.equal(retriedNotification.rows[0].attempt_count, 2);
+    assert.equal(retryEmailCount, 1);
+  } finally {
+    for (const quoteId of [event.payload.quote_id, failedNotificationEvent.payload.quote_id]) {
+      await pool.query(
+        `DELETE FROM order_notifications WHERE tenant_id = $1 AND order_id IN
+         (SELECT id FROM orders WHERE tenant_id = $1 AND quote_id = $2)`,
+        [event.tenant_id, quoteId]
+      );
+      await pool.query(
+        `DELETE FROM order_status_history WHERE tenant_id = $1 AND order_id IN
+         (SELECT id FROM orders WHERE tenant_id = $1 AND quote_id = $2)`,
+        [event.tenant_id, quoteId]
+      );
+      await pool.query('DELETE FROM orders WHERE tenant_id = $1 AND quote_id = $2', [event.tenant_id, quoteId]);
+    }
+    await pool.query(
+      'DELETE FROM processed_events WHERE event_id = ANY($1::uuid[])',
+      [[event.event_id, duplicateEvent.event_id, failedNotificationEvent.event_id]]
+    );
     global.fetch = originalFetch;
     await pool.end();
   }

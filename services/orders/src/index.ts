@@ -29,6 +29,11 @@ const adjustmentDeadlineTimer = setInterval(() => {
     })
     .catch((error) => console.error('[Orders] No se pudieron cerrar ajustes vencidos:', error));
 }, 60_000);
+const notificationRetryTimer = setInterval(() => {
+  OrderModel.retryFailedTrackingNotifications().catch((error) =>
+    console.error('[Orders] No se pudieron reintentar los avisos pendientes:', error)
+  );
+}, 30_000);
 
 app.use(cors());
 app.use(express.json());
@@ -51,6 +56,7 @@ const server = app.listen(PORT, async () => {
 async function shutdown(): Promise<void> {
   clearInterval(outboxTimer);
   clearInterval(adjustmentDeadlineTimer);
+  clearInterval(notificationRetryTimer);
   server.close();
   await closeQuoteAcceptedConsumer();
   await closeEventPublisher();

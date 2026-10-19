@@ -47,6 +47,13 @@ export interface GuestOrderTracking {
     reason: string | null;
     created_at: string;
   }>;
+  notifications: OrderNotification[];
+}
+
+export interface OrderNotification {
+  notification_type: string;
+  channel: 'EMAIL';
+  sent_at: string;
 }
 
 export interface DomainEvent<T> {
