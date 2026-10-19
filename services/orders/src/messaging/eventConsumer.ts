@@ -9,11 +9,13 @@ import {
 import { validateInspectionCompletedEvent } from '../domain/inspectionCompleted';
 import { validateQuoteAcceptedEvent } from '../domain/quoteAccepted';
 import { validateAdjustedQuoteEvent } from '../domain/adjustedQuoteEvent';
+import { validatePaymentCompletedEvent } from '../domain/paymentCompletedEvent';
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://reecicla:reecicla_password@localhost:5672';
 const EXCHANGE = 'reecicla.events';
 const QUEUE = 'orders.quote-accepted.queue';
 const INSPECTION_COMPLETED_QUEUE = 'orders.inspection-completed.queue';
+const PAYMENT_COMPLETED_QUEUE = 'orders.payment-completed.queue';
 
 let connection: ChannelModel | null = null;
 let channel: Channel | null = null;
@@ -127,6 +129,32 @@ export async function startInspectionCompletedConsumer(): Promise<void> {
     }
   });
   console.log(`[Orders] Escuchando ${INSPECTION_COMPLETED_QUEUE} para inspection.completed.`);
+}
+
+export async function startPaymentCompletedConsumer(): Promise<void> {
+  const activeChannel = await connect();
+  await activeChannel.assertQueue(PAYMENT_COMPLETED_QUEUE, { durable: true });
+  await activeChannel.bindQueue(PAYMENT_COMPLETED_QUEUE, EXCHANGE, 'payment.completed');
+  await activeChannel.consume(PAYMENT_COMPLETED_QUEUE, async (message: ConsumeMessage | null) => {
+    if (!message) return;
+    let event: unknown;
+    try {
+      event = JSON.parse(message.content.toString()) as unknown;
+    } catch (error) {
+      console.error('[Orders] Mensaje PaymentCompleted con JSON inválido descartado:', error);
+      activeChannel.ack(message);
+      return;
+    }
+    try {
+      validatePaymentCompletedEvent(event);
+      await OrderModel.processPaymentCompletedEvent(event);
+      activeChannel.ack(message);
+    } catch (error) {
+      console.error('[Orders] Error procesando PaymentCompleted; se reintentará:', error);
+      activeChannel.nack(message, false, true);
+    }
+  });
+  console.log(`[Orders] Escuchando ${PAYMENT_COMPLETED_QUEUE} para payment.completed.`);
 }
 
 export async function closeQuoteAcceptedConsumer(): Promise<void> {

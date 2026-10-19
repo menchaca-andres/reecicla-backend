@@ -4,10 +4,12 @@ import {
   AdjustedQuoteEventPayload,
   DomainEvent,
   InspectionCompletedPayload,
+  PaymentCompletedPayload,
   QuoteAcceptedPayload,
 } from '../types/orders';
 import { validateQuoteAcceptedEvent } from '../domain/quoteAccepted';
 import { validateInspectionCompletedEvent } from '../domain/inspectionCompleted';
+import { originalPriceWasConfirmed } from '../domain/inspectionPayment';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'crypto';
 
 const TRACKING_LINK_TTL_DAYS = 90;
@@ -50,6 +52,107 @@ async function sendTrackingLink(email: string, customerName: string, orderNumber
 }
 
 export class OrderModel {
+  static async authorizePayment(
+    orderId: string,
+    tenantId: string,
+    userId: string | undefined,
+    action: 'PAY' | 'READ'
+  ): Promise<{
+    id: string;
+    tenant_id: string;
+    user_id: string | null;
+    order_number: string;
+    amount: number | string;
+    currency: string;
+    status: string;
+  } | null> {
+    const statuses = action === 'PAY' ? ['PAYMENT_PENDING'] : ['PAYMENT_PENDING', 'PAID', 'CLOSED'];
+    const { rows } = await pool.query(
+      `SELECT id, tenant_id, user_id, order_number,
+              final_price AS amount,
+              currency, status
+       FROM orders
+       WHERE id = $1 AND tenant_id = $2
+         AND status = ANY($3::varchar[])
+         AND final_price IS NOT NULL
+         AND ($4::uuid IS NULL OR user_id = $4)`,
+      [orderId, tenantId, statuses, userId ?? null]
+    );
+    return rows[0] ?? null;
+  }
+
+  static async processPaymentCompletedEvent(
+    event: DomainEvent<PaymentCompletedPayload>
+  ): Promise<void> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const processed = await client.query(
+        `INSERT INTO processed_events (event_id, event_type, tenant_id, correlation_id)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (event_id) DO NOTHING
+         RETURNING event_id`,
+        [event.event_id, event.event_type, event.tenant_id, event.correlation_id]
+      );
+      if (processed.rowCount === 0) {
+        await client.query('COMMIT');
+        return;
+      }
+
+      const result = await client.query<{
+        id: string;
+        status: string;
+        final_price: number | string | null;
+        quoted_price: number | string;
+        currency: string;
+      }>(
+        `SELECT id, status, final_price, quoted_price, currency
+         FROM orders
+         WHERE id = $1 AND tenant_id = $2
+         FOR UPDATE`,
+        [event.payload.order_id, event.tenant_id]
+      );
+      const order = result.rows[0];
+      if (!order) throw new Error('No se encontró la orden del pago.');
+      const acceptedAmount = Number(order.final_price);
+      if (
+        !Number.isFinite(acceptedAmount) ||
+        acceptedAmount.toFixed(2) !== Number(event.payload.amount).toFixed(2) ||
+        order.currency.trim() !== event.payload.currency
+      ) {
+        throw new Error('El monto o moneda del pago no coincide con el monto aceptado de la orden.');
+      }
+      if (order.status === 'PAID') {
+        await client.query('COMMIT');
+        return;
+      }
+      if (order.status !== 'PAYMENT_PENDING') {
+        throw new Error('La orden ya no está pendiente de pago.');
+      }
+
+      await client.query(
+        `SELECT set_config('reecicla.operator_user_id', $1, true),
+                set_config('reecicla.status_reason', $2, true)`,
+        [event.payload.paid_by_user_id, `Pago ${event.payload.payment_id} completado por ${event.payload.method}.`]
+      );
+      const updated = await client.query(
+        `UPDATE orders
+         SET status = 'PAID', updated_at = NOW()
+         WHERE id = $1 AND tenant_id = $2 AND status = 'PAYMENT_PENDING'`,
+        [order.id, event.tenant_id]
+      );
+      if (updated.rowCount === 0) {
+        throw new Error('La orden cambió de estado mientras se procesaba el pago.');
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   static async createFromAcceptedQuote(event: DomainEvent<QuoteAcceptedPayload>): Promise<void> {
     validateQuoteAcceptedEvent(event);
 
@@ -173,23 +276,43 @@ export class OrderModel {
         return;
       }
 
+      const existing = await client.query<{
+        id: string;
+        status: string;
+        declared_condition: string | null;
+      }>(
+        `SELECT id, status, declared_condition
+         FROM orders
+         WHERE id = $1 AND tenant_id = $2
+         FOR UPDATE`,
+        [event.payload.order_id, event.tenant_id]
+      );
+      const order = existing.rows[0];
+      if (!order) throw new Error('No se encontró la orden asociada a la inspección.');
+      const quoteConfirmed = originalPriceWasConfirmed(
+        order.declared_condition,
+        event.payload.actual_condition,
+        event.payload.result
+      );
+      const targetStatus = quoteConfirmed ? 'PAYMENT_PENDING' : 'INSPECTED';
+      const reason = quoteConfirmed
+        ? 'Inspección confirmó la condición declarada y el precio original aceptado.'
+        : event.payload.justification;
       await client.query(
         `SELECT set_config('reecicla.operator_user_id', $1, true),
                 set_config('reecicla.status_reason', $2, true)`,
-        [event.payload.completed_by_user_id, event.payload.justification]
+        [event.payload.completed_by_user_id, reason]
       );
       const updated = await client.query(
         `UPDATE orders
-         SET status = 'INSPECTED', updated_at = NOW()
-         WHERE id = $1 AND tenant_id = $2 AND status IN ('RECEIVED', 'INSPECTING')`,
-        [event.payload.order_id, event.tenant_id]
+         SET status = $1,
+             final_price = CASE WHEN $1 = 'PAYMENT_PENDING' THEN quoted_price ELSE final_price END,
+             updated_at = NOW()
+         WHERE id = $2 AND tenant_id = $3 AND status IN ('RECEIVED', 'INSPECTING')`,
+        [targetStatus, event.payload.order_id, event.tenant_id]
       );
       if (updated.rowCount === 0) {
-        const order = await client.query(
-          'SELECT status FROM orders WHERE id = $1 AND tenant_id = $2',
-          [event.payload.order_id, event.tenant_id]
-        );
-        if (order.rows[0]?.status !== 'INSPECTED') {
+        if (order.status !== targetStatus) {
           throw new Error('No se encontró la orden elegible para completar la inspección.');
         }
       }

@@ -7,6 +7,7 @@ import { OrderModel } from './models/orderModel';
 import {
   closeQuoteAcceptedConsumer,
   startInspectionCompletedConsumer,
+  startPaymentCompletedConsumer,
   startQuoteAcceptedConsumer,
 } from './messaging/eventConsumer';
 import { closeEventPublisher, dispatchPendingOrderEvents } from './messaging/eventPublisher';
@@ -40,6 +41,7 @@ const server = app.listen(PORT, async () => {
     await pool.query('SELECT NOW()');
     await startQuoteAcceptedConsumer();
     await startInspectionCompletedConsumer();
+    await startPaymentCompletedConsumer();
     await dispatchPendingOrderEvents();
   } catch (error) {
     console.error('[Orders Service] No se pudo iniciar su conexión de datos/mensajería:', error);

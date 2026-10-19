@@ -88,6 +88,17 @@ export interface AdjustedQuoteEventPayload {
   responded_at?: string;
 }
 
+export interface PaymentCompletedPayload {
+  payment_id: string;
+  order_id: string;
+  amount: number;
+  currency: string;
+  method: 'BANK_TRANSFER' | 'CHECK';
+  reference: string | null;
+  paid_by_user_id: string;
+  paid_at: string;
+}
+
 export type AdjustmentResolution = 'RETURN' | 'RECYCLE';
 
 export type BoxRequestStatus = 'REQUESTED' | 'SHIPPED' | 'DELIVERED' | 'LOST' | 'CANCELLED';
