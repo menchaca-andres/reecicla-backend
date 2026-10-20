@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { pool } from '../config/db';
 import { AuthService } from '../services/authService';
 import { EmailService } from '../services/emailService';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
@@ -285,6 +286,54 @@ export class AuthController {
     } catch (error: any) {
       console.error('[Auth] No se pudo enviar el enlace de seguimiento:', error);
       res.status(503).json({ error: error.message || 'No se pudo enviar el enlace de seguimiento.' });
+    }
+  }
+
+  static async notifyCatalogMaintenance(req: Request, res: Response): Promise<void> {
+    try {
+      const { tenant_id, summary } = req.body ?? {};
+      if (typeof tenant_id !== 'string' || !tenant_id || !summary || typeof summary !== 'object') {
+        res.status(400).json({ error: 'tenant_id y summary son requeridos.' });
+        return;
+      }
+
+      const admins = await pool.query<{ email: string; name: string | null }>(
+        `SELECT email, name
+         FROM users
+         WHERE tenant_id = $1 AND role IN ('TENANT_ADMIN', 'CATALOG_ADMIN')`,
+        [tenant_id]
+      );
+      if (admins.rows.length === 0) {
+        res.status(503).json({ error: 'No hay administradores registrados para recibir el aviso de mantenimiento.' });
+        return;
+      }
+
+      let sentCount = 0;
+      for (const admin of admins.rows) {
+        try {
+          await EmailService.sendCatalogMaintenanceSummary(
+            admin.email,
+            admin.name || 'Administrador',
+            summary
+          );
+          sentCount++;
+        } catch (emailError) {
+          console.error(`[Auth] Error enviando email de mantenimiento a ${admin.email}:`, emailError);
+        }
+      }
+
+      if (sentCount === 0) {
+        res.status(503).json({ error: 'No se pudo enviar el aviso de mantenimiento a ningún administrador.' });
+        return;
+      }
+      res.status(200).json({
+        message: 'Notificaciones de mantenimiento enviadas.',
+        sent_count: sentCount,
+        admin_count: admins.rows.length,
+      });
+    } catch (error) {
+      console.error('[Auth] Error procesando notificación de mantenimiento:', error);
+      res.status(500).json({ error: 'Error procesando notificación de mantenimiento.' });
     }
   }
 

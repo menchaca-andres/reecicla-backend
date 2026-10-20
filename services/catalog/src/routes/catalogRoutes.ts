@@ -9,6 +9,9 @@ const router = Router();
 
 router.post('/bootstrap', authenticatePlatformAdmin, CatalogController.bootstrapTenant);
 router.get('/device-types', authenticateOptionalToken, CatalogController.listDeviceTypes);
+router.get('/device-types/inactivity/evaluation', authenticateToken, authorizeRoles('CATALOG_ADMIN', 'TENANT_ADMIN', 'SUPER_ADMIN'), CatalogController.evaluateInactivity);
+router.post('/device-types/inactivity/maintenance', authenticateToken, authorizeRoles('CATALOG_ADMIN', 'TENANT_ADMIN', 'SUPER_ADMIN'), CatalogController.executeInactivityMaintenance);
+router.get('/audit-logs', authenticateToken, authorizeRoles('CATALOG_ADMIN', 'TENANT_ADMIN', 'SUPER_ADMIN'), CatalogController.listAuditLogs);
 
 router.post('/device-types', authenticateToken, authorizeRoles('CATALOG_ADMIN', 'TENANT_ADMIN', 'SUPER_ADMIN'), CatalogController.createDeviceType);
 

@@ -80,6 +80,7 @@ Prefijo de negocio: `/recicla/{slug}/…`
 
 ### Catálogo y órdenes
 - `/recicla/{slug}/catalog/…` y `/recicla/{slug}/orders/…` usan el mismo header de tenant.
+- HU-023 avisa por correo a los administradores 24 horas antes de una desactivación automática. La ejecución verifica con Orders que no haya stock ni pedidos activos; si Orders no responde, no desactiva ningún tipo.
 
 ### Pagos
 - `POST /recicla/{slug}/api/payments/orders/:orderId` ➔ Registrar pago como `TENANT_ADMIN` con `method` (`BANK_TRANSFER` o `CHECK`), `reference`, archivo `receipt` y header `Idempotency-Key`.

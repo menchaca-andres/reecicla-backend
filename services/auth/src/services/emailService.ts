@@ -85,4 +85,85 @@ export class EmailService {
       html: `<p>Hola ${safeName},</p><p>Tu cotización fue aceptada y el pedido <strong>${safeOrderNumber}</strong> está en proceso.</p><p><a href="${safeTrackingUrl}">Ver estado de mi pedido</a></p><p>Este enlace es privado y vence en 90 días. No lo compartas.</p>`,
     });
   }
+
+  static async sendCatalogMaintenanceSummary(
+    email: string,
+    adminName: string,
+    summary: {
+      totalDeactivated: number;
+      totalBlocked: number;
+      deactivatedItems: Array<{ code: string; name: string; last_received_at?: string; reason: string }>;
+      blockedItems: Array<{ code: string; name: string; alert: string }>;
+      executedBy: string;
+      executedAt: string;
+    } & (
+      | { phase: 'WARNING'; eligibleAfter: string }
+      | { phase?: 'COMPLETED'; eligibleAfter?: undefined }
+    )
+  ): Promise<void> {
+    const { from, transporter } = EmailService.createTransporter();
+    const safeName = escapeHtml(adminName);
+    const isWarning = summary.phase === 'WARNING';
+    const subject = isWarning
+      ? '[Reecicla] Aviso previo de inactividad de catálogo (HU-023)'
+      : '[Reecicla] Resumen de Mantenimiento de Catálogo (HU-023)';
+    const actionText = isWarning
+      ? `Los tipos listados podrían desactivarse automáticamente después del ${new Date(summary.eligibleAfter).toLocaleString()}, si continúan sin actividad y no tienen dependencias activas.`
+      : 'Se ha ejecutado el proceso de revisión y desactivación de tipos de equipos sin recepciones en los últimos 12 meses.';
+    const summaryRows = isWarning
+      ? `<strong>Tipos con aviso previo:</strong> <span style="color:#b45309;font-weight:bold;">${summary.deactivatedItems.length}</span><br/>`
+      : `<strong>Total desactivados por inactividad:</strong> <span style="color:#b91c1c;font-weight:bold;">${summary.totalDeactivated}</span><br/>`;
+    const summaryTableHeader = isWarning ? 'Tipos que requieren revisión' : 'Tipos de Equipo';
+    const rowsHtml = summary.deactivatedItems.length > 0
+      ? summary.deactivatedItems.map((item) => `
+          <tr>
+            <td style="padding:8px;border:1px solid #ddd;"><strong>${escapeHtml(item.name)}</strong> (${escapeHtml(item.code)})</td>
+            <td style="padding:8px;border:1px solid #ddd;">${item.last_received_at ? new Date(item.last_received_at).toLocaleDateString() : 'Sin recepciones previas'}</td>
+            <td style="padding:8px;border:1px solid #ddd;">${escapeHtml(item.reason)}</td>
+          </tr>
+        `).join('')
+      : '<tr><td colspan="3" style="padding:8px;text-align:center;">No se desactivaron tipos.</td></tr>';
+
+    const blockedHtml = summary.blockedItems.length > 0
+      ? `<div style="margin-top:16px;background:#fff7ed;padding:12px;border:1px solid #fed7aa;border-radius:6px;">
+           <h4 style="color:#c2410c;margin:0 0 8px;">Tipos mantenidos activos por dependencias (Stock o pedidos pendientes - CA03):</h4>
+           <ul style="margin:0;padding-left:20px;color:#9a3412;">
+             ${summary.blockedItems.map((item) => `<li><strong>${escapeHtml(item.name)}</strong>: ${escapeHtml(item.alert)}</li>`).join('')}
+           </ul>
+         </div>`
+      : '';
+
+    await transporter.sendMail({
+      from,
+      to: email,
+      subject,
+      text: `Hola ${adminName}, ${actionText}`,
+      html: `
+        <div style="font-family:sans-serif;max-width:600px;margin:0 auto;color:#1e293b;">
+          <h2 style="color:#0f172a;border-bottom:2px solid #e2e8f0;padding-bottom:8px;">${isWarning ? 'Aviso previo de inactividad de catálogo' : 'Resumen de Mantenimiento de Catálogo'} (HU-023)</h2>
+          <p>Hola <strong>${safeName}</strong>,</p>
+          <p>${escapeHtml(actionText)}</p>
+          <p style="background:#f8fafc;padding:10px;border-radius:6px;border:1px solid #e2e8f0;">
+            <strong>Ejecutado por:</strong> ${escapeHtml(summary.executedBy)}<br/>
+            <strong>Fecha de ejecución:</strong> ${new Date(summary.executedAt).toLocaleString()}<br/>
+            ${summaryRows}
+            <strong>Total protegidos por dependencias activas:</strong> <span style="color:#166534;font-weight:bold;">${summary.totalBlocked}</span>
+          </p>
+          <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:13px;">
+            <thead>
+              <tr style="background:#f1f5f9;">
+                <th style="padding:8px;border:1px solid #ddd;text-align:left;">${summaryTableHeader}</th>
+                <th style="padding:8px;border:1px solid #ddd;text-align:left;">Última Recepción</th>
+                <th style="padding:8px;border:1px solid #ddd;text-align:left;">Motivo</th>
+              </tr>
+            </thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+          ${blockedHtml}
+          <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0 12px;"/>
+          <p style="color:#64748b;font-size:11px;">Reecicla Bolivia — Sistema Automatizado de Gestión de Inventario</p>
+        </div>
+      `,
+    });
+  }
 }
