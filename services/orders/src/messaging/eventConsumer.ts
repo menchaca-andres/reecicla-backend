@@ -4,6 +4,7 @@ import {
   AdjustedQuoteEventPayload,
   DomainEvent,
   InspectionCompletedPayload,
+  PaymentCompletedPayload,
   PaymentFailedPayload,
   QuoteAcceptedPayload,
 } from '../types/orders';
@@ -12,6 +13,7 @@ import { validateQuoteAcceptedEvent } from '../domain/quoteAccepted';
 import { validateAdjustedQuoteEvent } from '../domain/adjustedQuoteEvent';
 import { validatePaymentCompletedEvent } from '../domain/paymentCompletedEvent';
 import { validatePaymentFailedEvent } from '../domain/paymentFailedEvent';
+import { classifyPaymentEventError } from '../domain/paymentEventRejection';
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://reecicla:reecicla_password@localhost:5672';
 const EXCHANGE = 'reecicla.events';
@@ -148,21 +150,37 @@ export async function startPaymentCompletedConsumer(): Promise<void> {
       activeChannel.ack(message);
       return;
     }
+    const isFailure =
+      typeof event === 'object' &&
+      event !== null &&
+      'event_type' in event &&
+      event.event_type === 'PaymentFailed';
+    let failedEvent: DomainEvent<PaymentFailedPayload> | null = null;
+    let completedEvent: DomainEvent<PaymentCompletedPayload> | null = null;
     try {
-      if (
-        typeof event === 'object' &&
-        event !== null &&
-        'event_type' in event &&
-        event.event_type === 'PaymentFailed'
-      ) {
+      if (isFailure) {
         validatePaymentFailedEvent(event);
-        await OrderModel.processPaymentFailedEvent(event);
+        failedEvent = event;
       } else {
         validatePaymentCompletedEvent(event);
-        await OrderModel.processPaymentCompletedEvent(event);
+        completedEvent = event;
       }
+    } catch (validationError) {
+      console.error('[Orders] Evento de pago inválido descartado:', validationError);
+      activeChannel.ack(message);
+      return;
+    }
+    try {
+      if (failedEvent) await OrderModel.processPaymentFailedEvent(failedEvent);
+      else if (completedEvent) await OrderModel.processPaymentCompletedEvent(completedEvent);
       activeChannel.ack(message);
     } catch (error) {
+      if (classifyPaymentEventError(error) === 'discard') {
+        // Regla de negocio violada: reintentar nunca lo resolvería.
+        console.error('[Orders] Evento de pago rechazado y descartado:', (error as Error).message);
+        activeChannel.ack(message);
+        return;
+      }
       console.error('[Orders] Error procesando evento de pago; se reintentará:', error);
       activeChannel.nack(message, false, true);
     }

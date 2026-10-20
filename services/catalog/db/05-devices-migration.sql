@@ -50,7 +50,7 @@ SELECT
     d.description
 FROM device_types dt
 JOIN device_brands db ON db.device_type_id = dt.id AND db.tenant_id = dt.tenant_id
-JOIN (
+CROSS JOIN (
     VALUES
         ('REFRIGERATOR',   'Samsung',    'No Frost 400L',         2022, 'Refrigerador familiar doble puerta'),
         ('REFRIGERATOR',   'LG',         'Inverter 350L',         2021, 'Refrigerador LG inverter'),

@@ -16,6 +16,7 @@ import { validateQuoteAcceptedEvent } from '../domain/quoteAccepted';
 import { validateInspectionCompletedEvent } from '../domain/inspectionCompleted';
 import { originalPriceWasConfirmed } from '../domain/inspectionPayment';
 import { DispositionError, decideDispositionAction } from '../domain/disposition';
+import { PaymentEventRejectedError } from '../domain/paymentEventRejection';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'crypto';
 
 const TRACKING_LINK_TTL_DAYS = 90;
@@ -229,21 +230,21 @@ export class OrderModel {
         [event.payload.order_id, event.tenant_id]
       );
       const order = result.rows[0];
-      if (!order) throw new Error('No se encontró la orden del pago.');
+      if (!order) throw new PaymentEventRejectedError('No se encontró la orden del pago.');
       const acceptedAmount = Number(order.final_price);
       if (
         !Number.isFinite(acceptedAmount) ||
         acceptedAmount.toFixed(2) !== Number(event.payload.amount).toFixed(2) ||
         order.currency.trim() !== event.payload.currency
       ) {
-        throw new Error('El monto o moneda del pago no coincide con el monto aceptado de la orden.');
+        throw new PaymentEventRejectedError('El monto o moneda del pago no coincide con el monto aceptado de la orden.');
       }
       if (order.status === 'PAID') {
         await client.query('COMMIT');
         return;
       }
       if (order.status !== 'PAYMENT_PENDING') {
-        throw new Error('La orden ya no está pendiente de pago.');
+        throw new PaymentEventRejectedError('La orden ya no está pendiente de pago.');
       }
 
       await client.query(
@@ -294,7 +295,7 @@ export class OrderModel {
         [event.payload.order_id, event.tenant_id]
       );
       if (!order.rows[0] || !['PAYMENT_PENDING', 'PAID'].includes(order.rows[0].status)) {
-        throw new Error('La orden no está disponible para registrar el fallo de pago.');
+        throw new PaymentEventRejectedError('La orden no está disponible para registrar el fallo de pago.');
       }
       await client.query('COMMIT');
     } catch (error) {
@@ -474,9 +475,11 @@ export class OrderModel {
         [event.payload.completed_by_user_id, reason]
       );
       const updated = await client.query(
+        // $1 se castea explícitamente: sin el cast Postgres deduce varchar (status)
+        // y text (comparación) para el mismo parámetro y rechaza la consulta.
         `UPDATE orders
-         SET status = $1,
-             final_price = CASE WHEN $1 = 'PAYMENT_PENDING' THEN quoted_price ELSE final_price END,
+         SET status = $1::varchar,
+             final_price = CASE WHEN $1::varchar = 'PAYMENT_PENDING' THEN quoted_price ELSE final_price END,
              updated_at = NOW()
          WHERE id = $2 AND tenant_id = $3 AND status IN ('RECEIVED', 'INSPECTING')`,
         [targetStatus, event.payload.order_id, event.tenant_id]
