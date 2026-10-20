@@ -474,9 +474,11 @@ export class OrderModel {
         [event.payload.completed_by_user_id, reason]
       );
       const updated = await client.query(
+        // $1 se castea explícitamente: sin el cast Postgres deduce varchar (status)
+        // y text (comparación) para el mismo parámetro y rechaza la consulta.
         `UPDATE orders
-         SET status = $1,
-             final_price = CASE WHEN $1 = 'PAYMENT_PENDING' THEN quoted_price ELSE final_price END,
+         SET status = $1::varchar,
+             final_price = CASE WHEN $1::varchar = 'PAYMENT_PENDING' THEN quoted_price ELSE final_price END,
              updated_at = NOW()
          WHERE id = $2 AND tenant_id = $3 AND status IN ('RECEIVED', 'INSPECTING')`,
         [targetStatus, event.payload.order_id, event.tenant_id]
