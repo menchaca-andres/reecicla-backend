@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { DeviceModel } from '../models/deviceModel';
 import { resolveTenantId } from '../utils/tenant';
+import { paginationMeta, parsePagination } from '../utils/pagination';
 
 export class DeviceController {
   static async listDevices(req: AuthenticatedRequest, res: Response): Promise<void> {
@@ -16,8 +17,18 @@ export class DeviceController {
         return;
       }
 
-      const devices = await DeviceModel.getDevices(tenantId, deviceTypeId, brandId, includeInactive);
-      res.json({ devices });
+      const pagination = parsePagination(req.query);
+      if (pagination === null) {
+        res.status(400).json({ error: 'La paginación debe usar página positiva y page_size entre 1 y 100.' });
+        return;
+      }
+      if (!pagination) {
+        const devices = await DeviceModel.getDevices(tenantId, deviceTypeId, brandId, includeInactive);
+        res.json({ devices });
+        return;
+      }
+      const result = await DeviceModel.getDevices(tenantId, deviceTypeId, brandId, includeInactive, pagination);
+      res.json({ devices: result.items, pagination: paginationMeta(pagination, result.total_items) });
     } catch (error: any) {
       console.error('[DeviceController.listDevices] Error:', error);
       res.status(500).json({ error: 'Error interno al consultar dispositivos.' });

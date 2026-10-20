@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { DeviceBrandModel } from '../models/deviceBrandModel';
 import { resolveTenantId } from '../utils/tenant';
+import { paginationMeta, parsePagination } from '../utils/pagination';
 
 export class BrandController {
   static async listBrands(req: AuthenticatedRequest, res: Response): Promise<void> {
@@ -15,8 +16,18 @@ export class BrandController {
         return;
       }
 
-      const brands = await DeviceBrandModel.getBrands(tenantId, deviceTypeId, includeInactive);
-      res.json({ brands });
+      const pagination = parsePagination(req.query);
+      if (pagination === null) {
+        res.status(400).json({ error: 'La paginación debe usar página positiva y page_size entre 1 y 100.' });
+        return;
+      }
+      if (!pagination) {
+        const brands = await DeviceBrandModel.getBrands(tenantId, deviceTypeId, includeInactive);
+        res.json({ brands });
+        return;
+      }
+      const result = await DeviceBrandModel.getBrands(tenantId, deviceTypeId, includeInactive, pagination);
+      res.json({ brands: result.items, pagination: paginationMeta(pagination, result.total_items) });
     } catch (error: any) {
       console.error('[BrandController.listBrands] Error:', error);
       res.status(500).json({ error: 'Error interno al consultar las marcas.' });

@@ -1,5 +1,6 @@
 import { PricingRuleModel } from '../models/pricingRuleModel';
 import { QuoteModel } from '../models/quoteModel';
+import type { PageResult, PaginationRequest } from '../utils/pagination';
 import { DefinePricingRuleDTO, CreateQuoteDTO, Quote, PricingRule } from '../types/quotation';
 import { randomUUID } from 'crypto';
 
@@ -377,8 +378,14 @@ export class QuotationService {
     return { quote };
   }
 
-  static async getUserQuotes(tenantId: string, userId: string): Promise<Quote[]> {
-    return await QuoteModel.findByUserId(tenantId, userId);
+  static async getUserQuotes(
+    tenantId: string,
+    userId: string,
+    pagination?: PaginationRequest
+  ): Promise<Quote[] | PageResult<Quote>> {
+    return pagination
+      ? await QuoteModel.findByUserId(tenantId, userId, pagination)
+      : await QuoteModel.findByUserId(tenantId, userId);
   }
 
   static async getTenantRules(tenantId: string): Promise<PricingRule[]> {

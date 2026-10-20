@@ -1,4 +1,5 @@
 import { pool } from '../config/db';
+import type { PageResult, PaginationRequest } from '../utils/pagination';
 import { DomainError } from '../domain/errors';
 import {
   Inspection,
@@ -206,15 +207,34 @@ export class InspectionModel {
     return completed;
   }
 
-  static async listForTenant(tenantId: string): Promise<Inspection[]> {
+  static listForTenant(tenantId: string): Promise<Inspection[]>;
+  static listForTenant(
+    tenantId: string,
+    pagination: PaginationRequest
+  ): Promise<PageResult<Inspection>>;
+  static async listForTenant(
+    tenantId: string,
+    pagination?: PaginationRequest
+  ): Promise<Inspection[] | PageResult<Inspection>> {
     const { rows } = await pool.query(
       `SELECT ${INSPECTION_COLUMNS}
        FROM inspections i
        JOIN received_devices r ON r.tenant_id = i.tenant_id AND r.order_id = i.order_id
        WHERE i.tenant_id = $1
-       ORDER BY i.inspected_at DESC`,
+       ORDER BY i.inspected_at DESC, i.id DESC
+       ${pagination ? 'LIMIT $2 OFFSET $3' : ''}`,
+      pagination
+        ? [tenantId, pagination.limit, pagination.offset]
+        : [tenantId]
+    );
+    if (!pagination) return rows;
+    const count = await pool.query<{ count: string }>(
+      `SELECT COUNT(*) AS count
+       FROM inspections i
+       JOIN received_devices r ON r.tenant_id = i.tenant_id AND r.order_id = i.order_id
+       WHERE i.tenant_id = $1`,
       [tenantId]
     );
-    return rows;
+    return { items: rows, total_items: Number(count.rows[0].count) };
   }
 }

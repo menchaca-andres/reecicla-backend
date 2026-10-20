@@ -1,4 +1,5 @@
 import { pool } from '../config/db';
+import type { PageResult, PaginationRequest } from '../utils/pagination';
 
 export interface DeviceBrand {
   id: string;
@@ -11,11 +12,23 @@ export interface DeviceBrand {
 }
 
 export class DeviceBrandModel {
+  static getBrands(
+    tenantId: string,
+    deviceTypeId?: string,
+    includeInactive?: boolean
+  ): Promise<DeviceBrand[]>;
+  static getBrands(
+    tenantId: string,
+    deviceTypeId: string | undefined,
+    includeInactive: boolean,
+    pagination: PaginationRequest
+  ): Promise<PageResult<DeviceBrand>>;
   static async getBrands(
     tenantId: string,
     deviceTypeId?: string,
-    includeInactive = false
-  ): Promise<DeviceBrand[]> {
+    includeInactive = false,
+    pagination?: PaginationRequest
+  ): Promise<DeviceBrand[] | PageResult<DeviceBrand>> {
     let query = `
       SELECT b.*
       FROM device_brands b
@@ -32,10 +45,25 @@ export class DeviceBrandModel {
       query += ` AND b.status = 'ACTIVE'`;
     }
 
-    query += ` ORDER BY b.name ASC`;
+    query += ` ORDER BY ${pagination ? 'b.created_at DESC, b.id DESC' : 'b.name ASC'}`;
 
-    const res = await pool.query(query, params);
-    return res.rows;
+    const countParams = [tenantId];
+    if (deviceTypeId) {
+      countParams.push(deviceTypeId);
+    }
+    const paginatedQuery = pagination
+      ? `${query} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`
+      : query;
+    const res = await pool.query(paginatedQuery, pagination
+      ? [...params, pagination.limit, pagination.offset]
+      : params);
+    if (!pagination) return res.rows;
+    const countSql = `SELECT COUNT(*) AS count FROM device_brands b
+      WHERE b.tenant_id = $1
+      ${deviceTypeId ? 'AND b.device_type_id = $2' : ''}
+      ${includeInactive ? '' : "AND b.status = 'ACTIVE'"}`;
+    const count = await pool.query<{ count: string }>(countSql, countParams);
+    return { items: res.rows, total_items: Number(count.rows[0].count) };
   }
 
   static async createBrand(

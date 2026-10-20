@@ -1,10 +1,13 @@
 import { Request, Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { OrderModel } from '../models/orderModel';
+import { paginationMeta, parsePagination } from '../utils/pagination';
 import { dispatchPendingOrderEvents } from '../messaging/eventPublisher';
 import { DispositionError, validateDispositionInput } from '../domain/disposition';
 
 export class OrderController {
+  private static readonly UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
   static async authorizePayment(req: Request, res: Response): Promise<void> {
     const { order_id, tenant_id, user_id, action } = req.body ?? {};
     const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -133,8 +136,21 @@ export class OrderController {
       return;
     }
     try {
-      const orders = await OrderModel.listForUser(req.authUser.tenantId, req.authUser.userId);
-      res.status(200).json({ orders });
+      const pagination = parsePagination(req.query);
+      if (pagination === null) {
+        res.status(400).json({ error: 'La paginación debe usar página positiva y page_size entre 1 y 100.' });
+        return;
+      }
+      if (!pagination) {
+        const orders = await OrderModel.listForUser(req.authUser.tenantId, req.authUser.userId);
+        res.status(200).json({ orders });
+        return;
+      }
+      const result = await OrderModel.listForUser(req.authUser.tenantId, req.authUser.userId, pagination);
+      res.status(200).json({
+        orders: result.items,
+        pagination: paginationMeta(pagination, result.total_items),
+      });
     } catch (error) {
       console.error('[Orders] Error consultando órdenes:', error);
       res.status(500).json({ error: 'No se pudieron consultar las órdenes.' });
@@ -165,8 +181,45 @@ export class OrderController {
       return;
     }
     try {
-      const orders = await OrderModel.listAllForTenant(req.authUser.tenantId);
-      res.status(200).json({ orders });
+      const pagination = parsePagination(req.query);
+      if (pagination === null) {
+        res.status(400).json({ error: 'La paginación debe usar página positiva y page_size entre 1 y 100.' });
+        return;
+      }
+      const status = typeof req.query.status === 'string' && req.query.status !== 'ALL'
+        ? req.query.status
+        : undefined;
+      const rawOrderIds = req.query.order_ids;
+      let orderIds: string[] | undefined;
+      if (rawOrderIds !== undefined) {
+        if (typeof rawOrderIds !== 'string') {
+          res.status(400).json({ error: 'order_ids debe ser una lista de identificadores UUID.' });
+          return;
+        }
+        orderIds = rawOrderIds.split(',').filter(Boolean);
+        if (
+          orderIds.length === 0 ||
+          orderIds.length > 100 ||
+          orderIds.some((id) => !OrderController.UUID_PATTERN.test(id))
+        ) {
+          res.status(400).json({ error: 'order_ids debe contener entre 1 y 100 identificadores UUID válidos.' });
+          return;
+        }
+      }
+      if (!pagination) {
+        const orders = orderIds
+          ? await OrderModel.listAllForTenant(req.authUser.tenantId, status, undefined, orderIds)
+          : await OrderModel.listAllForTenant(req.authUser.tenantId, status);
+        res.status(200).json({ orders });
+        return;
+      }
+      const result = orderIds
+        ? await OrderModel.listAllForTenant(req.authUser.tenantId, status, pagination, orderIds)
+        : await OrderModel.listAllForTenant(req.authUser.tenantId, status, pagination);
+      res.status(200).json({
+        orders: result.items,
+        pagination: paginationMeta(pagination, result.total_items),
+      });
     } catch (error) {
       console.error('[Orders] Error consultando órdenes para el tenant:', error);
       res.status(500).json({ error: 'No se pudieron consultar las órdenes.' });

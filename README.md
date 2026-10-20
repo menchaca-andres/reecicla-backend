@@ -88,6 +88,9 @@ Prefijo de negocio: `/recicla/{slug}/…`
 - `GET /recicla/{slug}/api/payments/orders/:orderId/:paymentId/receipt` ➔ Descargar el comprobante PDF de Reecicla con autorización de orden.
 - `GET /recicla/{slug}/api/payments/orders/:orderId/:paymentId/external-receipt` ➔ Descargar la evidencia bancaria opcional con autorización de orden.
 
+### Paginación de listados
+Los listados de cotizaciones, órdenes, pagos, inspecciones, catálogo, versiones de reglas y auditoría aceptan `page` y `page_size`. Al enviar uno de los parámetros, `page` inicia en `1`, `page_size` en `10` y el máximo permitido es `100`. La respuesta conserva su propiedad de colección (`quotes`, `orders`, `payments`, etc.) y agrega `pagination` con `page`, `page_size`, `total_items` y `total_pages`. Sin parámetros se conserva el comportamiento de respuesta completo para compatibilidad con otros consumidores y selectores del catálogo. Los registros con fecha se ordenan de más reciente a más antiguo y usan el identificador como desempate estable.
+
 ---
 
 ## 🚀 Comandos de Docker

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'crypto';
 import { mkdir, unlink, writeFile } from 'fs/promises';
 import path from 'path';
 import { pool } from '../config/db';
+import type { PageResult, PaginationRequest } from '../utils/pagination';
 import { Payment, PaymentCompletedPayload, PaymentFailedPayload, PaymentMethod } from '../types/payment';
 import { generatePaymentReceipt } from '../domain/paymentReceiptGenerator';
 
@@ -335,7 +336,17 @@ export class PaymentModel {
     }
   }
 
-  static async findForOrder(tenantId: string, orderId: string): Promise<Payment[]> {
+  static findForOrder(tenantId: string, orderId: string): Promise<Payment[]>;
+  static findForOrder(
+    tenantId: string,
+    orderId: string,
+    pagination: PaginationRequest
+  ): Promise<PageResult<Payment>>;
+  static async findForOrder(
+    tenantId: string,
+    orderId: string,
+    pagination?: PaginationRequest
+  ): Promise<Payment[] | PageResult<Payment>> {
     const { rows } = await pool.query<Payment>(
       `SELECT id, tenant_id, order_id, amount, currency, method, status,
               reference, failure_reason, paid_by_user_id, paid_by_user_name, paid_at, created_at,
@@ -343,13 +354,29 @@ export class PaymentModel {
               external_receipt_path, external_receipt_mime_type
        FROM payments
        WHERE tenant_id = $1 AND order_id = $2
-       ORDER BY created_at DESC`,
+       ORDER BY created_at DESC, id DESC
+       ${pagination ? 'LIMIT $3 OFFSET $4' : ''}`,
+      pagination
+        ? [tenantId, orderId, pagination.limit, pagination.offset]
+        : [tenantId, orderId]
+    );
+    if (!pagination) return rows;
+    const count = await pool.query<{ count: string }>(
+      'SELECT COUNT(*) AS count FROM payments WHERE tenant_id = $1 AND order_id = $2',
       [tenantId, orderId]
     );
-    return rows;
+    return { items: rows, total_items: Number(count.rows[0].count) };
   }
 
-  static async findForTenant(tenantId: string): Promise<Payment[]> {
+  static findForTenant(tenantId: string): Promise<Payment[]>;
+  static findForTenant(
+    tenantId: string,
+    pagination: PaginationRequest
+  ): Promise<PageResult<Payment>>;
+  static async findForTenant(
+    tenantId: string,
+    pagination?: PaginationRequest
+  ): Promise<Payment[] | PageResult<Payment>> {
     const { rows } = await pool.query<Payment>(
       `SELECT id, tenant_id, order_id, amount, currency, method, status,
               reference, failure_reason, paid_by_user_id, paid_by_user_name, paid_at, created_at,
@@ -357,10 +384,18 @@ export class PaymentModel {
               external_receipt_path, external_receipt_mime_type
        FROM payments
        WHERE tenant_id = $1
-       ORDER BY created_at DESC`,
+       ORDER BY created_at DESC, id DESC
+       ${pagination ? 'LIMIT $2 OFFSET $3' : ''}`,
+      pagination
+        ? [tenantId, pagination.limit, pagination.offset]
+        : [tenantId]
+    );
+    if (!pagination) return rows;
+    const count = await pool.query<{ count: string }>(
+      'SELECT COUNT(*) AS count FROM payments WHERE tenant_id = $1',
       [tenantId]
     );
-    return rows;
+    return { items: rows, total_items: Number(count.rows[0].count) };
   }
 
   static async findReceipt(

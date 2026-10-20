@@ -5,6 +5,7 @@ import { InspectionModel } from '../models/inspectionModel';
 import { ReceivedDeviceModel } from '../models/receivedDeviceModel';
 import { InspectionService } from '../services/inspectionService';
 import { dispatchPendingInspectionEvents } from '../messaging/eventPublisher';
+import { paginationMeta, parsePagination } from '../utils/pagination';
 
 function handleError(res: Response, error: unknown, context: string, fallback: string): void {
   if (error instanceof DomainError) {
@@ -22,8 +23,21 @@ export class InspectionController {
       return;
     }
     try {
-      const pending = await ReceivedDeviceModel.listPending(req.authUser.tenantId);
-      res.status(200).json({ pending });
+      const pagination = parsePagination(req.query);
+      if (pagination === null) {
+        res.status(400).json({ error: 'La paginación debe usar página positiva y page_size entre 1 y 100.' });
+        return;
+      }
+      if (!pagination) {
+        const pending = await ReceivedDeviceModel.listPending(req.authUser.tenantId);
+        res.status(200).json({ pending });
+        return;
+      }
+      const result = await ReceivedDeviceModel.listPending(req.authUser.tenantId, pagination);
+      res.status(200).json({
+        pending: result.items,
+        pagination: paginationMeta(pagination, result.total_items),
+      });
     } catch (error) {
       handleError(res, error, 'Error consultando equipos pendientes', 'No se pudieron consultar los equipos pendientes de inspección.');
     }
@@ -110,8 +124,21 @@ export class InspectionController {
       return;
     }
     try {
-      const inspections = await InspectionModel.listForTenant(req.authUser.tenantId);
-      res.status(200).json({ inspections });
+      const pagination = parsePagination(req.query);
+      if (pagination === null) {
+        res.status(400).json({ error: 'La paginación debe usar página positiva y page_size entre 1 y 100.' });
+        return;
+      }
+      if (!pagination) {
+        const inspections = await InspectionModel.listForTenant(req.authUser.tenantId);
+        res.status(200).json({ inspections });
+        return;
+      }
+      const result = await InspectionModel.listForTenant(req.authUser.tenantId, pagination);
+      res.status(200).json({
+        inspections: result.items,
+        pagination: paginationMeta(pagination, result.total_items),
+      });
     } catch (error) {
       handleError(res, error, 'Error consultando inspecciones', 'No se pudieron consultar las inspecciones.');
     }

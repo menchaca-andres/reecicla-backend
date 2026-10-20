@@ -1,4 +1,5 @@
 import { pool } from '../config/db';
+import type { PageResult, PaginationRequest } from '../utils/pagination';
 import {
   DeviceType,
   CatalogAuditLog,
@@ -67,12 +68,32 @@ export class DeviceTypeModel {
     }
   }
 
-  static async getDeviceTypes(tenantId: string, includeInactive = false): Promise<DeviceType[]> {
+  static getDeviceTypes(tenantId: string, includeInactive?: boolean): Promise<DeviceType[]>;
+  static getDeviceTypes(
+    tenantId: string,
+    includeInactive: boolean,
+    pagination: PaginationRequest
+  ): Promise<PageResult<DeviceType>>;
+  static async getDeviceTypes(
+    tenantId: string,
+    includeInactive = false,
+    pagination?: PaginationRequest
+  ): Promise<DeviceType[] | PageResult<DeviceType>> {
     const query = includeInactive
-      ? 'SELECT * FROM device_types WHERE tenant_id = $1 ORDER BY name ASC'
-      : "SELECT * FROM device_types WHERE tenant_id = $1 AND status = 'ACTIVE' ORDER BY name ASC";
-    const res = await pool.query(query, [tenantId]);
-    return res.rows;
+      ? `SELECT * FROM device_types WHERE tenant_id = $1 ORDER BY ${pagination ? 'created_at DESC, id DESC' : 'name ASC'}`
+      : `SELECT * FROM device_types WHERE tenant_id = $1 AND status = 'ACTIVE' ORDER BY ${pagination ? 'created_at DESC, id DESC' : 'name ASC'}`;
+    const res = await pool.query(
+      `${query}${pagination ? ' LIMIT $2 OFFSET $3' : ''}`,
+      pagination ? [tenantId, pagination.limit, pagination.offset] : [tenantId]
+    );
+    if (!pagination) return res.rows;
+    const count = await pool.query<{ count: string }>(
+      includeInactive
+        ? 'SELECT COUNT(*) AS count FROM device_types WHERE tenant_id = $1'
+        : "SELECT COUNT(*) AS count FROM device_types WHERE tenant_id = $1 AND status = 'ACTIVE'",
+      [tenantId]
+    );
+    return { items: res.rows, total_items: Number(count.rows[0].count) };
   }
 
   static async getDeviceTypeById(tenantId: string, id: string): Promise<DeviceType | null> {
@@ -635,14 +656,29 @@ export class DeviceTypeModel {
     };
   }
 
-  static async getAuditLogs(tenantId: string, limit = 50): Promise<CatalogAuditLog[]> {
+  static getAuditLogs(tenantId: string, limit?: number): Promise<CatalogAuditLog[]>;
+  static getAuditLogs(
+    tenantId: string,
+    limit: number,
+    pagination: PaginationRequest
+  ): Promise<PageResult<CatalogAuditLog>>;
+  static async getAuditLogs(
+    tenantId: string,
+    limit = 50,
+    pagination?: PaginationRequest
+  ): Promise<CatalogAuditLog[] | PageResult<CatalogAuditLog>> {
     const res = await pool.query<CatalogAuditLog>(
       `SELECT * FROM catalog_audit_logs
        WHERE tenant_id = $1
-       ORDER BY created_at DESC
-       LIMIT $2`,
-      [tenantId, limit]
+       ORDER BY created_at DESC, id DESC
+       LIMIT $2 ${pagination ? 'OFFSET $3' : ''}`,
+      pagination ? [tenantId, pagination.limit, pagination.offset] : [tenantId, limit]
     );
-    return res.rows;
+    if (!pagination) return res.rows;
+    const count = await pool.query<{ count: string }>(
+      'SELECT COUNT(*) AS count FROM catalog_audit_logs WHERE tenant_id = $1',
+      [tenantId]
+    );
+    return { items: res.rows, total_items: Number(count.rows[0].count) };
   }
 }

@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { DeviceTypeModel } from '../models/deviceTypeModel';
 import { resolveTenantId } from '../utils/tenant';
+import { paginationMeta, parsePagination } from '../utils/pagination';
 
 export class CatalogController {
   static async bootstrapTenant(req: AuthenticatedRequest, res: Response): Promise<void> {
@@ -39,8 +40,21 @@ export class CatalogController {
         return;
       }
 
-      const deviceTypes = await DeviceTypeModel.getDeviceTypes(tenantId, includeInactive);
-      res.json({ deviceTypes });
+      const pagination = parsePagination(req.query);
+      if (pagination === null) {
+        res.status(400).json({ error: 'La paginación debe usar página positiva y page_size entre 1 y 100.' });
+        return;
+      }
+      if (!pagination) {
+        const deviceTypes = await DeviceTypeModel.getDeviceTypes(tenantId, includeInactive);
+        res.json({ deviceTypes });
+        return;
+      }
+      const result = await DeviceTypeModel.getDeviceTypes(tenantId, includeInactive, pagination);
+      res.json({
+        deviceTypes: result.items,
+        pagination: paginationMeta(pagination, result.total_items),
+      });
     } catch (error: any) {
       console.error('[CatalogController.listDeviceTypes] Error:', error);
       res.status(500).json({ error: 'Error interno al consultar tipos de dispositivo.' });
@@ -180,9 +194,22 @@ export class CatalogController {
         res.status(400).json({ error: 'No se pudo determinar el contexto del negocio.' });
         return;
       }
-      const limit = req.query.limit ? Number(req.query.limit) : 50;
-      const auditLogs = await DeviceTypeModel.getAuditLogs(tenantId, limit);
-      res.status(200).json({ audit_logs: auditLogs });
+      const pagination = parsePagination(req.query);
+      if (pagination === null) {
+        res.status(400).json({ error: 'La paginación debe usar página positiva y page_size entre 1 y 100.' });
+        return;
+      }
+      if (!pagination) {
+        const limit = req.query.limit ? Number(req.query.limit) : 50;
+        const auditLogs = await DeviceTypeModel.getAuditLogs(tenantId, limit);
+        res.status(200).json({ audit_logs: auditLogs });
+        return;
+      }
+      const result = await DeviceTypeModel.getAuditLogs(tenantId, pagination.limit, pagination);
+      res.status(200).json({
+        audit_logs: result.items,
+        pagination: paginationMeta(pagination, result.total_items),
+      });
     } catch (error: any) {
       console.error('[CatalogController.listAuditLogs] Error:', error);
       res.status(500).json({ error: error.message || 'Error consultando auditoría de catálogo.' });

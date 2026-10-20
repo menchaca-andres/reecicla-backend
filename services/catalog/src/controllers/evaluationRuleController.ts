@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { EvaluationRuleModel } from '../models/evaluationRuleModel';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { resolveTenantId } from '../utils/tenant';
+import { paginationMeta, parsePagination } from '../utils/pagination';
 
 export class EvaluationRuleController {
   static async getActiveRule(req: Request, res: Response): Promise<void> {
@@ -40,8 +41,18 @@ export class EvaluationRuleController {
         return;
       }
 
-      const rules = await EvaluationRuleModel.getRuleHistory(tenantId, deviceTypeId);
-      res.json({ rules });
+      const pagination = parsePagination(req.query);
+      if (pagination === null) {
+        res.status(400).json({ error: 'La paginación debe usar página positiva y page_size entre 1 y 100.' });
+        return;
+      }
+      if (!pagination) {
+        const rules = await EvaluationRuleModel.getRuleHistory(tenantId, deviceTypeId);
+        res.json({ rules });
+        return;
+      }
+      const result = await EvaluationRuleModel.getRuleHistory(tenantId, deviceTypeId, pagination);
+      res.json({ rules: result.items, pagination: paginationMeta(pagination, result.total_items) });
     } catch (err: any) {
       console.error('[EvaluationRuleController.getRuleHistory] Error:', err);
       res.status(500).json({ error: 'Error al consultar el historial de reglas.' });

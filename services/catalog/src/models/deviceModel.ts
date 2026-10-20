@@ -1,4 +1,5 @@
 import { pool } from '../config/db';
+import type { PageResult, PaginationRequest } from '../utils/pagination';
 
 export interface Device {
   id: string;
@@ -17,12 +18,26 @@ export interface Device {
 }
 
 export class DeviceModel {
+  static getDevices(
+    tenantId: string,
+    deviceTypeId?: string,
+    brandId?: string,
+    includeInactive?: boolean
+  ): Promise<Device[]>;
+  static getDevices(
+    tenantId: string,
+    deviceTypeId: string | undefined,
+    brandId: string | undefined,
+    includeInactive: boolean,
+    pagination: PaginationRequest
+  ): Promise<PageResult<Device>>;
   static async getDevices(
     tenantId: string,
     deviceTypeId?: string,
     brandId?: string,
-    includeInactive = false
-  ): Promise<Device[]> {
+    includeInactive = false,
+    pagination?: PaginationRequest
+  ): Promise<Device[] | PageResult<Device>> {
     let query = `
       SELECT
         d.*,
@@ -50,10 +65,29 @@ export class DeviceModel {
       query += ` AND d.status = 'ACTIVE'`;
     }
 
-    query += ` ORDER BY dt.name ASC, db.name ASC, d.model ASC`;
+    query += ` ORDER BY ${pagination ? 'd.created_at DESC, d.id DESC' : 'dt.name ASC, db.name ASC, d.model ASC'}`;
 
-    const res = await pool.query(query, params);
-    return res.rows;
+    const countConditions: string[] = ['d.tenant_id = $1'];
+    const countParams: string[] = [tenantId];
+    if (deviceTypeId) {
+      countParams.push(deviceTypeId);
+      countConditions.push(`d.device_type_id = $${countParams.length}`);
+    }
+    if (brandId) {
+      countParams.push(brandId);
+      countConditions.push(`d.brand_id = $${countParams.length}`);
+    }
+    if (!includeInactive) countConditions.push("d.status = 'ACTIVE'");
+    const countSql = `SELECT COUNT(*) AS count FROM devices d WHERE ${countConditions.join(' AND ')}`;
+    const paginatedQuery = pagination
+      ? `${query} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`
+      : query;
+    const res = await pool.query(paginatedQuery, pagination
+      ? [...params, pagination.limit, pagination.offset]
+      : params);
+    if (!pagination) return res.rows;
+    const count = await pool.query<{ count: string }>(countSql, countParams);
+    return { items: res.rows, total_items: Number(count.rows[0].count) };
   }
 
   static async getById(id: string, tenantId: string): Promise<Device | null> {

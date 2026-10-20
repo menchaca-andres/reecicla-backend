@@ -1,4 +1,5 @@
 import { pool } from '../config/db';
+import type { PageResult, PaginationRequest } from '../utils/pagination';
 import { DeviceReceivedPayload, DomainEvent, ReceivedDevice } from '../types/inspection';
 import { validateDeviceReceivedEvent } from '../domain/deviceReceived';
 
@@ -59,15 +60,34 @@ export class ReceivedDeviceModel {
   }
 
   /** Equipos recibidos que todavía no tienen inspección. */
-  static async listPending(tenantId: string): Promise<ReceivedDevice[]> {
+  static listPending(tenantId: string): Promise<ReceivedDevice[]>;
+  static listPending(
+    tenantId: string,
+    pagination: PaginationRequest
+  ): Promise<PageResult<ReceivedDevice>>;
+  static async listPending(
+    tenantId: string,
+    pagination?: PaginationRequest
+  ): Promise<ReceivedDevice[] | PageResult<ReceivedDevice>> {
     const { rows } = await pool.query(
       `SELECT r.tenant_id, r.order_id, r.quote_id, r.device_type_id, r.device_type_name, r.received_at, r.received_by_user
        FROM received_devices r
        LEFT JOIN inspections i ON i.tenant_id = r.tenant_id AND i.order_id = r.order_id
        WHERE r.tenant_id = $1 AND i.id IS NULL
-       ORDER BY r.received_at`,
+       ORDER BY r.received_at DESC, r.order_id DESC
+       ${pagination ? 'LIMIT $2 OFFSET $3' : ''}`,
+      pagination
+        ? [tenantId, pagination.limit, pagination.offset]
+        : [tenantId]
+    );
+    if (!pagination) return rows;
+    const count = await pool.query<{ count: string }>(
+      `SELECT COUNT(*) AS count
+       FROM received_devices r
+       LEFT JOIN inspections i ON i.tenant_id = r.tenant_id AND i.order_id = r.order_id
+       WHERE r.tenant_id = $1 AND i.id IS NULL`,
       [tenantId]
     );
-    return rows;
+    return { items: rows, total_items: Number(count.rows[0].count) };
   }
 }

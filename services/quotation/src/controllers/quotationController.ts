@@ -1,5 +1,6 @@
 import { Response } from 'express';
 import { QuotationService } from '../services/quotationService';
+import { paginationMeta, parsePagination } from '../utils/pagination';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { dispatchPendingQuoteEvents } from '../messaging/quoteOutbox';
 import { assertTenantAccess, gatewayTenantId } from '../utils/tenant';
@@ -251,8 +252,25 @@ export class QuotationController {
         return;
       }
 
-      const quotes = await QuotationService.getUserQuotes(tenantId, userId);
-      res.status(200).json({ quotes });
+      const pagination = parsePagination(req.query);
+      if (pagination === null) {
+        res.status(400).json({ error: 'La paginación debe usar página positiva y page_size entre 1 y 100.' });
+        return;
+      }
+      if (!pagination) {
+        const quotes = await QuotationService.getUserQuotes(tenantId, userId);
+        res.status(200).json({ quotes });
+        return;
+      }
+      const result = await QuotationService.getUserQuotes(tenantId, userId, pagination);
+      if (Array.isArray(result)) {
+        res.status(200).json({ quotes: result });
+        return;
+      }
+      res.status(200).json({
+        quotes: result.items,
+        pagination: paginationMeta(pagination, result.total_items),
+      });
     } catch (error: any) {
       res.status(500).json({ error: 'Error al consultar las cotizaciones del usuario.' });
     }

@@ -1,4 +1,5 @@
 import { pool } from '../config/db';
+import type { PageResult, PaginationRequest } from '../utils/pagination';
 import type { EvaluationRule, ChecklistItem } from '../types/catalog';
 
 export class EvaluationRuleModel {
@@ -14,16 +15,37 @@ export class EvaluationRuleModel {
     return result.rows[0] || null;
   }
 
-  static async getRuleHistory(tenantId: string, deviceTypeId: string): Promise<EvaluationRule[]> {
+  static getRuleHistory(tenantId: string, deviceTypeId: string): Promise<EvaluationRule[]>;
+  static getRuleHistory(
+    tenantId: string,
+    deviceTypeId: string,
+    pagination: PaginationRequest
+  ): Promise<PageResult<EvaluationRule>>;
+  static async getRuleHistory(
+    tenantId: string,
+    deviceTypeId: string,
+    pagination?: PaginationRequest
+  ): Promise<EvaluationRule[] | PageResult<EvaluationRule>> {
     const query = `
       SELECT er.*, dt.name AS device_type_name, dt.code AS device_type_code
       FROM evaluation_rules er
       JOIN device_types dt ON dt.id = er.device_type_id
       WHERE er.tenant_id = $1 AND er.device_type_id = $2
-      ORDER BY er.version DESC
+      ORDER BY er.version DESC, er.id DESC
+      ${pagination ? 'LIMIT $3 OFFSET $4' : ''}
     `;
-    const result = await pool.query(query, [tenantId, deviceTypeId]);
-    return result.rows;
+    const result = await pool.query(
+      query,
+      pagination
+        ? [tenantId, deviceTypeId, pagination.limit, pagination.offset]
+        : [tenantId, deviceTypeId]
+    );
+    if (!pagination) return result.rows;
+    const count = await pool.query<{ count: string }>(
+      'SELECT COUNT(*) AS count FROM evaluation_rules WHERE tenant_id = $1 AND device_type_id = $2',
+      [tenantId, deviceTypeId]
+    );
+    return { items: result.rows, total_items: Number(count.rows[0].count) };
   }
 
   static async getRuleById(tenantId: string, id: string): Promise<EvaluationRule | null> {

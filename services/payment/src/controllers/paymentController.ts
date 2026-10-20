@@ -5,6 +5,8 @@ import { identifyReceipt, validateIdempotencyKey } from '../domain/paymentReceip
 import { attemptPayout, SimulatedPayoutAdapter } from '../domain/payoutAdapter';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { PaymentModel } from '../models/paymentModel';
+import type { Payment } from '../types/payment';
+import { paginationMeta, parsePagination } from '../utils/pagination';
 import { dispatchPendingPaymentEvents } from '../messaging/eventPublisher';
 
 const payoutAdapter = new SimulatedPayoutAdapter();
@@ -15,7 +17,7 @@ function tenantId(req: AuthenticatedRequest): string {
   return req.authUser.tenantId;
 }
 
-function publicPayment(payment: Awaited<ReturnType<typeof PaymentModel.findForOrder>>[number]) {
+function publicPayment(payment: Payment) {
   return {
     id: payment.id,
     tenant_id: payment.tenant_id,
@@ -171,9 +173,22 @@ export class PaymentController {
         req.authUser.role === 'CLIENT' ? req.authUser.userId : undefined,
         'READ'
       );
-      const payments = await PaymentModel.findForOrder(req.authUser.tenantId, orderId);
+      const pagination = parsePagination(req.query);
+      if (pagination === null) {
+        res.status(400).json({ error: 'La paginación debe usar página positiva y page_size entre 1 y 100.' });
+        return;
+      }
       res.setHeader('Cache-Control', 'no-store');
-      res.status(200).json({ payments: payments.map(publicPayment) });
+      if (!pagination) {
+        const payments = await PaymentModel.findForOrder(req.authUser.tenantId, orderId);
+        res.status(200).json({ payments: payments.map(publicPayment) });
+        return;
+      }
+      const result = await PaymentModel.findForOrder(req.authUser.tenantId, orderId, pagination);
+      res.status(200).json({
+        payments: result.items.map(publicPayment),
+        pagination: paginationMeta(pagination, result.total_items),
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No se pudieron consultar los pagos.';
       const status = message.includes('no encontrada') || message.includes('no existe') ? 404 :
@@ -190,9 +205,22 @@ export class PaymentController {
 
   static async listForTenant(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
-      const payments = await PaymentModel.findForTenant(tenantId(req));
+      const pagination = parsePagination(req.query);
+      if (pagination === null) {
+        res.status(400).json({ error: 'La paginación debe usar página positiva y page_size entre 1 y 100.' });
+        return;
+      }
       res.setHeader('Cache-Control', 'no-store');
-      res.status(200).json({ payments: payments.map(publicPayment) });
+      if (!pagination) {
+        const payments = await PaymentModel.findForTenant(tenantId(req));
+        res.status(200).json({ payments: payments.map(publicPayment) });
+        return;
+      }
+      const result = await PaymentModel.findForTenant(tenantId(req), pagination);
+      res.status(200).json({
+        payments: result.items.map(publicPayment),
+        pagination: paginationMeta(pagination, result.total_items),
+      });
     } catch (error) {
       console.error('[Payment] Error consultando pagos del negocio:', error);
       res.status(500).json({ error: 'No se pudieron consultar los pagos.' });

@@ -1,4 +1,5 @@
 import { pool } from '../config/db';
+import type { PageResult, PaginationRequest } from '../utils/pagination';
 import {
   AdjustedQuoteCreatedPayload,
   AdjustedQuoteDecisionPayload,
@@ -427,14 +428,38 @@ export class QuoteModel {
     return quote;
   }
 
-  static async findByUserId(tenantId: string, userId: string): Promise<Quote[]> {
+  static findByUserId(tenantId: string, userId: string): Promise<Quote[]>;
+  static findByUserId(
+    tenantId: string,
+    userId: string,
+    pagination: PaginationRequest
+  ): Promise<PageResult<Quote>>;
+  static async findByUserId(
+    tenantId: string,
+    userId: string,
+    pagination?: PaginationRequest
+  ): Promise<Quote[] | PageResult<Quote>> {
     const query = `
       SELECT *, device_type_name AS device_type FROM quotes
       WHERE tenant_id = $1 AND user_id = $2
-      ORDER BY created_at DESC;
+      ORDER BY created_at DESC, id DESC
+      ${pagination ? 'LIMIT $3 OFFSET $4' : ''};
     `;
-    const { rows } = await pool.query<Quote>(query, [tenantId, userId]);
-    const originalIds = rows
+    const values = pagination
+      ? [tenantId, userId, pagination.limit, pagination.offset]
+      : [tenantId, userId];
+    const { rows } = await pool.query<Quote>(query, values);
+    const result: Quote[] | PageResult<Quote> = pagination
+      ? {
+          items: rows,
+          total_items: Number((await pool.query<{ count: string }>(
+            'SELECT COUNT(*) AS count FROM quotes WHERE tenant_id = $1 AND user_id = $2',
+            [tenantId, userId]
+          )).rows[0].count),
+        }
+      : rows;
+    const quotes = Array.isArray(result) ? result : result.items;
+    const originalIds = quotes
       .filter((quote) => quote.quote_type === 'INITIAL')
       .map((quote) => quote.id);
     if (originalIds.length > 0) {
@@ -447,10 +472,10 @@ export class QuoteModel {
         [tenantId, originalIds]
       );
       const auditsByQuote = new Map(audits.rows.map((audit) => [audit.original_quote_id, audit]));
-      for (const quote of rows) {
+      for (const quote of quotes) {
         quote.adjustment_audit = auditsByQuote.get(quote.id) ?? null;
       }
     }
-    return rows;
+    return result;
   }
 }

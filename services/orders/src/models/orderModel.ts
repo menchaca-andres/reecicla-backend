@@ -1,4 +1,5 @@
 import { pool } from '../config/db';
+import type { PageResult, PaginationRequest } from '../utils/pagination';
 import {
   AdjustmentResolution,
   AdjustedQuoteEventPayload,
@@ -181,17 +182,17 @@ export class OrderModel {
     currency: string;
     status: string;
   } | null> {
-    const statuses = action === 'PAY' ? ['PAYMENT_PENDING'] : ['PAYMENT_PENDING', 'PAID', 'CLOSED'];
+    const statuses = action === 'PAY' ? ['PAYMENT_PENDING'] : null;
     const { rows } = await pool.query(
       `SELECT id, tenant_id, user_id, order_number,
               final_price AS amount,
               currency, status
        FROM orders
        WHERE id = $1 AND tenant_id = $2
-         AND status = ANY($3::varchar[])
-         AND final_price IS NOT NULL
+         AND ($3::varchar[] IS NULL OR status = ANY($3::varchar[]))
+         AND ($5::boolean = FALSE OR final_price IS NOT NULL)
          AND ($4::uuid IS NULL OR user_id = $4)`,
-      [orderId, tenantId, statuses, userId ?? null]
+      [orderId, tenantId, statuses, userId ?? null, action === 'PAY']
     );
     return rows[0] ?? null;
   }
@@ -794,7 +795,17 @@ export class OrderModel {
     return trackingDetails;
   }
 
-  static async listForUser(tenantId: string, userId: string): Promise<Record<string, unknown>[]> {
+  static listForUser(tenantId: string, userId: string): Promise<Record<string, unknown>[]>;
+  static listForUser(
+    tenantId: string,
+    userId: string,
+    pagination: PaginationRequest
+  ): Promise<PageResult<Record<string, unknown>>>;
+  static async listForUser(
+    tenantId: string,
+    userId: string,
+    pagination?: PaginationRequest
+  ): Promise<Record<string, unknown>[] | PageResult<Record<string, unknown>>> {
     const { rows } = await pool.query(
       `SELECT o.*,
               b.tracking_code,
@@ -825,13 +836,51 @@ export class OrderModel {
        LEFT JOIN order_status_history h ON h.order_id = o.id AND h.tenant_id = o.tenant_id
        WHERE o.tenant_id = $1 AND o.user_id = $2
        GROUP BY o.id, d.id, b.tracking_code, b.status, b.shipped_at
-       ORDER BY o.created_at DESC`,
+       ORDER BY o.created_at DESC, o.id DESC
+       ${pagination ? 'LIMIT $3 OFFSET $4' : ''}`,
+      pagination
+       ? [tenantId, userId, pagination.limit, pagination.offset]
+       : [tenantId, userId]
+    );
+    if (!pagination) return rows;
+    const count = await pool.query<{ count: string }>(
+      'SELECT COUNT(*) AS count FROM orders WHERE tenant_id = $1 AND user_id = $2',
       [tenantId, userId]
     );
-    return rows;
+    return { items: rows, total_items: Number(count.rows[0].count) };
   }
 
-  static async listAllForTenant(tenantId: string): Promise<Record<string, unknown>[]> {
+  static listAllForTenant(tenantId: string, status?: string): Promise<Record<string, unknown>[]>;
+  static listAllForTenant(
+    tenantId: string,
+    status: string | undefined,
+    pagination: undefined,
+    orderIds: string[]
+  ): Promise<Record<string, unknown>[]>;
+  static listAllForTenant(
+    tenantId: string,
+    status: string | undefined,
+    pagination: PaginationRequest,
+    orderIds?: string[]
+  ): Promise<PageResult<Record<string, unknown>>>;
+  static async listAllForTenant(
+    tenantId: string,
+    status?: string,
+    pagination?: PaginationRequest,
+    orderIds?: string[]
+  ): Promise<Record<string, unknown>[] | PageResult<Record<string, unknown>>> {
+    const filters = ['o.tenant_id = $1'];
+    const values: unknown[] = [tenantId];
+    if (status) {
+      values.push(status);
+      filters.push(`o.status = $${values.length}`);
+    }
+    if (orderIds) {
+      values.push(orderIds);
+      filters.push(`o.id = ANY($${values.length}::uuid[])`);
+    }
+    const whereClause = filters.join(' AND ');
+    const paginationStart = values.length + 1;
     const { rows } = await pool.query(
       `SELECT o.*,
               b.tracking_code,
@@ -860,12 +909,18 @@ export class OrderModel {
        ) b ON true
        LEFT JOIN dispositions d ON d.order_id = o.id AND d.tenant_id = o.tenant_id
        LEFT JOIN order_status_history h ON h.order_id = o.id AND h.tenant_id = o.tenant_id
-       WHERE o.tenant_id = $1
+       WHERE ${whereClause}
        GROUP BY o.id, d.id, b.tracking_code, b.status, b.shipped_at
-       ORDER BY o.created_at DESC`,
-      [tenantId]
+       ORDER BY o.created_at DESC, o.id DESC
+       ${pagination ? `LIMIT $${paginationStart} OFFSET $${paginationStart + 1}` : ''}`,
+      pagination ? [...values, pagination.limit, pagination.offset] : values
     );
-    return rows;
+    if (!pagination) return rows;
+    const count = await pool.query<{ count: string }>(
+      `SELECT COUNT(*) AS count FROM orders o WHERE ${whereClause}`,
+      values
+    );
+    return { items: rows, total_items: Number(count.rows[0].count) };
   }
 
   static async findForUser(orderId: string, tenantId: string, userId: string): Promise<Record<string, unknown> | null> {
