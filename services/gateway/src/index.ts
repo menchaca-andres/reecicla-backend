@@ -14,6 +14,7 @@ const CATALOG_SERVICE_URL = process.env.CATALOG_SERVICE_URL || 'http://catalog-s
 const ORDERS_SERVICE_URL = process.env.ORDERS_SERVICE_URL || 'http://orders-service:3004';
 const INSPECTION_SERVICE_URL = process.env.INSPECTION_SERVICE_URL || 'http://inspection-service:3005';
 const PAYMENT_SERVICE_URL = process.env.PAYMENT_SERVICE_URL || 'http://payment-service:3006';
+const REPORTING_SERVICE_URL = process.env.REPORTING_SERVICE_URL || 'http://reporting-service:3007';
 
 function internalServiceToken(): string {
   const token = process.env.INTERNAL_SERVICE_TOKEN;
@@ -202,6 +203,7 @@ app.use('/recicla/:slug/auth', ...tenantScopedProxy(AUTH_SERVICE_URL, '/api/auth
 app.use('/recicla/:slug/orders', ...tenantScopedProxy(ORDERS_SERVICE_URL, '/api/orders'));
 app.use('/recicla/:slug/inspections', ...tenantScopedProxy(INSPECTION_SERVICE_URL, '/api/inspections'));
 app.use('/recicla/:slug/payments', ...tenantScopedProxy(PAYMENT_SERVICE_URL, '/api/payments'));
+app.use('/recicla/:slug/reports', ...tenantScopedProxy(REPORTING_SERVICE_URL, '/api/reports'));
 
 app.use('/recicla/:slug/api/quotation', quoteCreateRateLimit, ...tenantScopedProxy(QUOTATION_SERVICE_URL, '/api/quotation'));
 app.use('/recicla/:slug/api/catalog', ...tenantScopedProxy(CATALOG_SERVICE_URL, '/api/catalog'));
@@ -209,6 +211,7 @@ app.use('/recicla/:slug/api/auth', ...tenantScopedProxy(AUTH_SERVICE_URL, '/api/
 app.use('/recicla/:slug/api/orders', ...tenantScopedProxy(ORDERS_SERVICE_URL, '/api/orders'));
 app.use('/recicla/:slug/api/inspections', ...tenantScopedProxy(INSPECTION_SERVICE_URL, '/api/inspections'));
 app.use('/recicla/:slug/api/payments', ...tenantScopedProxy(PAYMENT_SERVICE_URL, '/api/payments'));
+app.use('/recicla/:slug/api/reports', ...tenantScopedProxy(REPORTING_SERVICE_URL, '/api/reports'));
 
 app.post('/api/auth/client-tenants', clientTenantLookupRateLimit, proxy(AUTH_SERVICE_URL, {
   parseReqBody: false,
@@ -238,6 +241,10 @@ app.use('/api/payments', proxy(PAYMENT_SERVICE_URL, {
   parseReqBody: false,
   proxyReqPathResolver: (req) => req.originalUrl,
 }));
+app.use('/api/reports', proxy(REPORTING_SERVICE_URL, {
+  parseReqBody: false,
+  proxyReqPathResolver: (req) => req.originalUrl,
+}));
 
 app.listen(PORT, () => {
   console.log(`[API Gateway] Running on port ${PORT}`);
@@ -247,4 +254,5 @@ app.listen(PORT, () => {
   console.log(`[API Gateway] Orders proxy -> ${ORDERS_SERVICE_URL}`);
   console.log(`[API Gateway] Inspection proxy -> ${INSPECTION_SERVICE_URL}`);
   console.log(`[API Gateway] Payment proxy -> ${PAYMENT_SERVICE_URL}`);
+  console.log(`[API Gateway] Reporting proxy -> ${REPORTING_SERVICE_URL}`);
 });

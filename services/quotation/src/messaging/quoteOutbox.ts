@@ -22,6 +22,7 @@ export async function dispatchPendingQuoteEvents(): Promise<void> {
         AdjustedQuoteCreated: 'quote.adjusted.created',
         AdjustedQuoteAccepted: 'quote.adjusted.accepted',
         AdjustedQuoteRejected: 'quote.adjusted.rejected',
+        QuoteStatusChanged: 'quote.status.changed',
       };
       const routingKey = routingKeys[event.event_type];
       if (!routingKey) throw new Error(`Tipo de evento de cotización no soportado: ${event.event_type}`);
